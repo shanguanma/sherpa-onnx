@@ -2,12 +2,15 @@
 # Copyright (c)  2023  Xiaomi Corporation
 
 import argparse
+import os
 import re
 from pathlib import Path
 
 import jinja2
 
 SHERPA_ONNX_DIR = Path(__file__).resolve().parent.parent.parent
+
+src_dir = os.environ.get("src_dir", "/tmp")
 
 
 def get_version():
@@ -33,12 +36,20 @@ def get_dict():
 
 def process_linux(s):
     libs = [
+        "libespeak-ng.so",
+        "libkaldi-decoder-core.so",
         "libkaldi-native-fbank-core.so",
-        "libonnxruntime.so.1.16.2",
+        "libonnxruntime.so.1.17.1",
+        "libssentencepiece_core.so",
+        "libpiper_phonemize.so.1",
         "libsherpa-onnx-c-api.so",
         "libsherpa-onnx-core.so",
+        "libsherpa-onnx-fstfar.so",
+        "libsherpa-onnx-fst.so",
+        "libsherpa-onnx-kaldifst-core.so",
+        "libucd.so",
     ]
-    prefix = f"{SHERPA_ONNX_DIR}/linux/sherpa_onnx/lib/"
+    prefix = f"{src_dir}/linux/"
     libs = [prefix + lib for lib in libs]
     libs = "\n      ;".join(libs)
 
@@ -55,12 +66,20 @@ def process_linux(s):
 
 def process_macos(s):
     libs = [
+        "libespeak-ng.dylib",
+        "libkaldi-decoder-core.dylib",
         "libkaldi-native-fbank-core.dylib",
-        "libonnxruntime.1.16.2.dylib",
+        "libonnxruntime.1.17.1.dylib",
+        "libssentencepiece_core.dylib",
+        "libpiper_phonemize.1.dylib",
         "libsherpa-onnx-c-api.dylib",
         "libsherpa-onnx-core.dylib",
+        "libsherpa-onnx-fstfar.dylib",
+        "libsherpa-onnx-fst.dylib",
+        "libsherpa-onnx-kaldifst-core.dylib",
+        "libucd.dylib",
     ]
-    prefix = f"{SHERPA_ONNX_DIR}/macos/sherpa_onnx/lib/"
+    prefix = f"{src_dir}/macos/"
     libs = [prefix + lib for lib in libs]
     libs = "\n      ;".join(libs)
 
@@ -75,41 +94,36 @@ def process_macos(s):
         f.write(s)
 
 
-def process_windows(s):
+def process_windows(s, rid):
     libs = [
+        "espeak-ng.dll",
+        "kaldi-decoder-core.dll",
         "kaldi-native-fbank-core.dll",
         "onnxruntime.dll",
+        "ssentencepiece_core.dll",
+        "piper_phonemize.dll",
         "sherpa-onnx-c-api.dll",
         "sherpa-onnx-core.dll",
+        "sherpa-onnx-fstfar.lib",
+        "sherpa-onnx-fst.lib",
+        "sherpa-onnx-kaldifst-core.lib",
+        "ucd.dll",
     ]
 
     version = get_version()
 
-    prefix1 = f"{SHERPA_ONNX_DIR}/windows/sherpa_onnx/lib/"
-    prefix2 = f"{SHERPA_ONNX_DIR}/windows/sherpa_onnx/"
-    prefix3 = f"{SHERPA_ONNX_DIR}/windows/"
-    prefix4 = f"{SHERPA_ONNX_DIR}/windows/sherpa_onnx-{version}.data/data/bin/"
-    print(prefix1, prefix2, prefix3, prefix4)
-
-    lib_list = []
-    for lib in libs:
-        for prefix in [prefix1, prefix2, prefix3, prefix4]:
-            f = Path(prefix) / lib
-            if f.is_file():
-                lib_list.append(str(f))
-                break
-
-    print("lib_list", lib_list)
-    libs = "\n      ;".join(lib_list)
+    prefix = f"{src_dir}/windows-{rid}/"
+    libs = [prefix + lib for lib in libs]
+    libs = "\n      ;".join(libs)
 
     d = get_dict()
-    d["dotnet_rid"] = "win-x64"
+    d["dotnet_rid"] = f"win-{rid}"
     d["libs"] = libs
 
     environment = jinja2.Environment()
     template = environment.from_string(s)
     s = template.render(**d)
-    with open("./windows/sherpa-onnx.runtime.csproj", "w") as f:
+    with open(f"./windows-{rid}/sherpa-onnx.runtime.csproj", "w") as f:
         f.write(s)
 
 
@@ -117,7 +131,8 @@ def main():
     s = read_proj_file("./sherpa-onnx.csproj.runtime.in")
     process_macos(s)
     process_linux(s)
-    process_windows(s)
+    process_windows(s, "x64")
+    process_windows(s, "x86")
 
     s = read_proj_file("./sherpa-onnx.csproj.in")
     d = get_dict()

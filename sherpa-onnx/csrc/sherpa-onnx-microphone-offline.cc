@@ -62,7 +62,7 @@ static int32_t RecordCallback(const void *input_buffer,
                               unsigned long frames_per_buffer,  // NOLINT
                               const PaStreamCallbackTimeInfo * /*time_info*/,
                               PaStreamCallbackFlags /*status_flags*/,
-                              void *user_data) {
+                              void * /*user_data*/) {
   std::lock_guard<std::mutex> lock(samples_mutex);
 
   auto p = reinterpret_cast<const float *>(input_buffer);
@@ -71,7 +71,7 @@ static int32_t RecordCallback(const void *input_buffer,
   return stop ? paComplete : paContinue;
 }
 
-static void Handler(int32_t sig) {
+static void Handler(int32_t /*sig*/) {
   stop = true;
   fprintf(stderr, "\nCaught Ctrl + C. Press Enter to exit\n");
 }
@@ -139,14 +139,31 @@ for a list of pre-trained models to download.
   PaDeviceIndex num_devices = Pa_GetDeviceCount();
   fprintf(stderr, "Num devices: %d\n", num_devices);
 
-  PaStreamParameters param;
+  int32_t device_index = Pa_GetDefaultInputDevice();
 
-  param.device = Pa_GetDefaultInputDevice();
-  if (param.device == paNoDevice) {
+  if (device_index == paNoDevice) {
     fprintf(stderr, "No default input device found\n");
+    fprintf(stderr, "If you are using Linux, please switch to \n");
+    fprintf(stderr, " ./bin/sherpa-onnx-alsa-offline \n");
     exit(EXIT_FAILURE);
   }
-  fprintf(stderr, "Use default device: %d\n", param.device);
+
+  const char *pDeviceIndex = std::getenv("SHERPA_ONNX_MIC_DEVICE");
+  if (pDeviceIndex) {
+    fprintf(stderr, "Use specified device: %s\n", pDeviceIndex);
+    device_index = atoi(pDeviceIndex);
+  }
+
+  for (int32_t i = 0; i != num_devices; ++i) {
+    const PaDeviceInfo *info = Pa_GetDeviceInfo(i);
+    fprintf(stderr, " %s %d %s\n", (i == device_index) ? "*" : " ", i,
+            info->name);
+  }
+
+  PaStreamParameters param;
+  param.device = device_index;
+
+  fprintf(stderr, "Use device: %d\n", param.device);
 
   const PaDeviceInfo *info = Pa_GetDeviceInfo(param.device);
   fprintf(stderr, "  Name: %s\n", info->name);
@@ -157,12 +174,17 @@ for a list of pre-trained models to download.
 
   param.suggestedLatency = info->defaultLowInputLatency;
   param.hostApiSpecificStreamInfo = nullptr;
-  float sample_rate = 16000;
+  float mic_sample_rate = 16000;
+  const char *pSampleRateStr = std::getenv("SHERPA_ONNX_MIC_SAMPLE_RATE");
+  if (pSampleRateStr) {
+    fprintf(stderr, "Use sample rate %f for mic\n", mic_sample_rate);
+    mic_sample_rate = atof(pSampleRateStr);
+  }
 
   PaStream *stream;
   PaError err =
       Pa_OpenStream(&stream, &param, nullptr, /* &outputParameters, */
-                    sample_rate,
+                    mic_sample_rate,
                     0,          // frames per buffer
                     paClipOff,  // we won't output out of range samples
                                 // so don't bother clipping them
@@ -195,7 +217,7 @@ for a list of pre-trained models to download.
         }
 
         auto s = recognizer.CreateStream();
-        s->AcceptWaveform(sample_rate, buf.data(), buf.size());
+        s->AcceptWaveform(mic_sample_rate, buf.data(), buf.size());
         recognizer.DecodeStream(s.get());
         SHERPA_ONNX_LOGE("Decoding Done! Result is:");
         SHERPA_ONNX_LOGE("%s", s->GetResult().text.c_str());

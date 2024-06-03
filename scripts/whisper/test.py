@@ -82,6 +82,7 @@ class OnnxModel:
         self.encoder = ort.InferenceSession(
             encoder,
             sess_options=self.session_opts,
+            providers=["CPUExecutionProvider"],
         )
 
         meta = self.encoder.get_modelmeta().custom_metadata_map
@@ -113,6 +114,7 @@ class OnnxModel:
         self.decoder = ort.InferenceSession(
             decoder,
             sess_options=self.session_opts,
+            providers=["CPUExecutionProvider"],
         )
 
     def run_encoder(
@@ -209,7 +211,7 @@ class OnnxModel:
         logits = logits.reshape(-1)
         mask = torch.ones(logits.shape[0], dtype=torch.int64)
         mask[self.all_language_tokens] = 0
-        logits[mask] = float("-inf")
+        logits[mask != 0] = float("-inf")
         lang_id = logits.argmax().item()
         print("detected language: ", self.id2lang[lang_id])
         return lang_id
@@ -253,8 +255,23 @@ def compute_features(filename: str) -> torch.Tensor:
     log_spec = torch.clamp(features, min=1e-10).log10()
     log_spec = torch.maximum(log_spec, log_spec.max() - 8.0)
     mel = (log_spec + 4.0) / 4.0
+    # mel (T, 80)
+
+    # We pad 1500 frames at the end so that it is able to detect eot
+    # You can use another value instead of 1500.
+    mel = torch.nn.functional.pad(mel, (0, 0, 0, 1500), "constant", 0)
+    # Note that if it throws for a multilingual model,
+    # please use a larger value, say 300
+
     target = 3000
-    mel = torch.nn.functional.pad(mel, (0, 0, 0, target - mel.shape[0]), "constant", 0)
+    if mel.shape[0] > target:
+        # -50 so that there are some zero tail paddings.
+        mel = mel[: target - 50]
+        mel = torch.nn.functional.pad(mel, (0, 0, 0, 50), "constant", 0)
+
+    # We don't need to pad it to 30 seconds now!
+    #  mel = torch.nn.functional.pad(mel, (0, 0, 0, target - mel.shape[0]), "constant", 0)
+
     mel = mel.t().unsqueeze(0)
 
     return mel

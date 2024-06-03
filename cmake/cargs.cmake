@@ -2,15 +2,15 @@ function(download_cargs)
   include(FetchContent)
 
   set(cargs_URL "https://github.com/likle/cargs/archive/refs/tags/v1.0.3.tar.gz")
-  set(cargs_URL2 "https://huggingface.co/csukuangfj/sherpa-onnx-cmake-deps/resolve/main/cargs-1.0.3.tar.gz")
+  set(cargs_URL2 "https://hub.nuaa.cf/likle/cargs/archive/refs/tags/v1.0.3.tar.gz")
   set(cargs_HASH "SHA256=ddba25bd35e9c6c75bc706c126001b8ce8e084d40ef37050e6aa6963e836eb8b")
 
   # If you don't have access to the Internet,
   # please pre-download cargs
   set(possible_file_locations
     $ENV{HOME}/Downloads/cargs-1.0.3.tar.gz
-    ${PROJECT_SOURCE_DIR}/cargs-1.0.3.tar.gz
-    ${PROJECT_BINARY_DIR}/cargs-1.0.3.tar.gz
+    ${CMAKE_SOURCE_DIR}/cargs-1.0.3.tar.gz
+    ${CMAKE_BINARY_DIR}/cargs-1.0.3.tar.gz
     /tmp/cargs-1.0.3.tar.gz
     /star-fj/fangjun/download/github/cargs-1.0.3.tar.gz
   )

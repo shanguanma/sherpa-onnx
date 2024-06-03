@@ -5,7 +5,9 @@
 #ifndef SHERPA_ONNX_CSRC_OFFLINE_RECOGNIZER_CTC_IMPL_H_
 #define SHERPA_ONNX_CSRC_OFFLINE_RECOGNIZER_CTC_IMPL_H_
 
+#include <ios>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -36,12 +38,23 @@ static OfflineRecognitionResult Convert(const OfflineCtcDecoderResult &src,
   std::string text;
 
   for (int32_t i = 0; i != src.tokens.size(); ++i) {
-    if (sym_table.contains("SIL") && src.tokens[i] == sym_table["SIL"]) {
+    if (sym_table.Contains("SIL") && src.tokens[i] == sym_table["SIL"]) {
       // tdnn models from yesno have a SIL token, we should remove it.
       continue;
     }
     auto sym = sym_table[src.tokens[i]];
     text.append(sym);
+
+    if (sym.size() == 1 && (sym[0] < 0x20 || sym[0] > 0x7e)) {
+      // for byte bpe models
+      // (but don't rewrite printable characters 0x20..0x7e,
+      //  which collide with standard BPE units)
+      std::ostringstream os;
+      os << "<0x" << std::hex << std::uppercase
+         << (static_cast<int32_t>(sym[0]) & 0xff) << ">";
+      sym = os.str();
+    }
+
     r.tokens.push_back(std::move(sym));
   }
   r.text = std::move(text);
@@ -90,9 +103,9 @@ class OfflineRecognizerCtcImpl : public OfflineRecognizerImpl {
       decoder_ = std::make_unique<OfflineCtcFstDecoder>(
           config_.ctc_fst_decoder_config);
     } else if (config_.decoding_method == "greedy_search") {
-      if (!symbol_table_.contains("<blk>") &&
-          !symbol_table_.contains("<eps>") &&
-          !symbol_table_.contains("<blank>")) {
+      if (!symbol_table_.Contains("<blk>") &&
+          !symbol_table_.Contains("<eps>") &&
+          !symbol_table_.Contains("<blank>")) {
         SHERPA_ONNX_LOGE(
             "We expect that tokens.txt contains "
             "the symbol <blk> or <eps> or <blank> and its ID.");
@@ -100,12 +113,12 @@ class OfflineRecognizerCtcImpl : public OfflineRecognizerImpl {
       }
 
       int32_t blank_id = 0;
-      if (symbol_table_.contains("<blk>")) {
+      if (symbol_table_.Contains("<blk>")) {
         blank_id = symbol_table_["<blk>"];
-      } else if (symbol_table_.contains("<eps>")) {
+      } else if (symbol_table_.Contains("<eps>")) {
         // for tdnn models of the yesno recipe from icefall
         blank_id = symbol_table_["<eps>"];
-      } else if (symbol_table_.contains("<blank>")) {
+      } else if (symbol_table_.Contains("<blank>")) {
         // for Wenet CTC models
         blank_id = symbol_table_["<blank>"];
       }

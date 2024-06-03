@@ -14,6 +14,7 @@
 #include "android/asset_manager_jni.h"
 #endif
 
+#include "sherpa-onnx/csrc/features.h"
 #include "sherpa-onnx/csrc/offline-ctc-fst-decoder-config.h"
 #include "sherpa-onnx/csrc/offline-lm-config.h"
 #include "sherpa-onnx/csrc/offline-model-config.h"
@@ -26,7 +27,7 @@ namespace sherpa_onnx {
 struct OfflineRecognitionResult;
 
 struct OfflineRecognizerConfig {
-  OfflineFeatureExtractorConfig feat_config;
+  FeatureExtractorConfig feat_config;
   OfflineModelConfig model_config;
   OfflineLMConfig lm_config;
   OfflineCtcFstDecoderConfig ctc_fst_decoder_config;
@@ -37,16 +38,19 @@ struct OfflineRecognizerConfig {
   std::string hotwords_file;
   float hotwords_score = 1.5;
 
+  float blank_penalty = 0.0;
+
   // only greedy_search is implemented
   // TODO(fangjun): Implement modified_beam_search
 
   OfflineRecognizerConfig() = default;
   OfflineRecognizerConfig(
-      const OfflineFeatureExtractorConfig &feat_config,
+      const FeatureExtractorConfig &feat_config,
       const OfflineModelConfig &model_config, const OfflineLMConfig &lm_config,
       const OfflineCtcFstDecoderConfig &ctc_fst_decoder_config,
       const std::string &decoding_method, int32_t max_active_paths,
-      const std::string &hotwords_file, float hotwords_score)
+      const std::string &hotwords_file, float hotwords_score,
+      float blank_penalty)
       : feat_config(feat_config),
         model_config(model_config),
         lm_config(lm_config),
@@ -54,7 +58,8 @@ struct OfflineRecognizerConfig {
         decoding_method(decoding_method),
         max_active_paths(max_active_paths),
         hotwords_file(hotwords_file),
-        hotwords_score(hotwords_score) {}
+        hotwords_score(hotwords_score),
+        blank_penalty(blank_penalty) {}
 
   void Register(ParseOptions *po);
   bool Validate() const;

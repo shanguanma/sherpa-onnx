@@ -15,9 +15,14 @@
 #include "android/asset_manager.h"
 #include "android/asset_manager_jni.h"
 #endif
+
+#include "fst/extensions/far/far.h"
+#include "kaldifst/csrc/kaldi-fst-io.h"
 #include "kaldifst/csrc/text-normalizer.h"
+#include "sherpa-onnx/csrc/jieba-lexicon.h"
 #include "sherpa-onnx/csrc/lexicon.h"
 #include "sherpa-onnx/csrc/macros.h"
+#include "sherpa-onnx/csrc/offline-tts-character-frontend.h"
 #include "sherpa-onnx/csrc/offline-tts-frontend.h"
 #include "sherpa-onnx/csrc/offline-tts-impl.h"
 #include "sherpa-onnx/csrc/offline-tts-vits-model.h"
@@ -45,6 +50,35 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
         tn_list_.push_back(std::make_unique<kaldifst::TextNormalizer>(f));
       }
     }
+
+    if (!config.rule_fars.empty()) {
+      if (config.model.debug) {
+        SHERPA_ONNX_LOGE("Loading FST archives");
+      }
+      std::vector<std::string> files;
+      SplitStringToVector(config.rule_fars, ",", false, &files);
+
+      tn_list_.reserve(files.size() + tn_list_.size());
+
+      for (const auto &f : files) {
+        if (config.model.debug) {
+          SHERPA_ONNX_LOGE("rule far: %s", f.c_str());
+        }
+        std::unique_ptr<fst::FarReader<fst::StdArc>> reader(
+            fst::FarReader<fst::StdArc>::Open(f));
+        for (; !reader->Done(); reader->Next()) {
+          std::unique_ptr<fst::StdConstFst> r(
+              fst::CastOrConvertToConstFst(reader->GetFst()->Copy()));
+
+          tn_list_.push_back(
+              std::make_unique<kaldifst::TextNormalizer>(std::move(r)));
+        }
+      }
+
+      if (config.model.debug) {
+        SHERPA_ONNX_LOGE("FST archives loaded!");
+      }
+    }
   }
 
 #if __ANDROID_API__ >= 9
@@ -66,12 +100,51 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
         tn_list_.push_back(std::make_unique<kaldifst::TextNormalizer>(is));
       }
     }
+
+    if (!config.rule_fars.empty()) {
+      std::vector<std::string> files;
+      SplitStringToVector(config.rule_fars, ",", false, &files);
+      tn_list_.reserve(files.size() + tn_list_.size());
+
+      for (const auto &f : files) {
+        if (config.model.debug) {
+          SHERPA_ONNX_LOGE("rule far: %s", f.c_str());
+        }
+
+        auto buf = ReadFile(mgr, f);
+
+        std::unique_ptr<std::istream> s(
+            new std::istrstream(buf.data(), buf.size()));
+
+        std::unique_ptr<fst::FarReader<fst::StdArc>> reader(
+            fst::FarReader<fst::StdArc>::Open(std::move(s)));
+
+        for (; !reader->Done(); reader->Next()) {
+          std::unique_ptr<fst::StdConstFst> r(
+              fst::CastOrConvertToConstFst(reader->GetFst()->Copy()));
+
+          tn_list_.push_back(
+              std::make_unique<kaldifst::TextNormalizer>(std::move(r)));
+        }  // for (; !reader->Done(); reader->Next())
+      }    // for (const auto &f : files)
+    }      // if (!config.rule_fars.empty())
   }
 #endif
 
-  GeneratedAudio Generate(const std::string &_text, int64_t sid = 0,
-                          float speed = 1.0) const override {
-    int32_t num_speakers = model_->NumSpeakers();
+  int32_t SampleRate() const override {
+    return model_->GetMetaData().sample_rate;
+  }
+
+  int32_t NumSpeakers() const override {
+    return model_->GetMetaData().num_speakers;
+  }
+
+  GeneratedAudio Generate(
+      const std::string &_text, int64_t sid = 0, float speed = 1.0,
+      GeneratedAudioCallback callback = nullptr) const override {
+    const auto &meta_data = model_->GetMetaData();
+    int32_t num_speakers = meta_data.num_speakers;
+
     if (num_speakers == 0 && sid != 0) {
       SHERPA_ONNX_LOGE(
           "This is a single-speaker model and supports only sid 0. Given sid: "
@@ -102,14 +175,16 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
     }
 
     std::vector<std::vector<int64_t>> x =
-        frontend_->ConvertTextToTokenIds(text, model_->Voice());
+        frontend_->ConvertTextToTokenIds(text, meta_data.voice);
 
     if (x.empty() || (x.size() == 1 && x[0].empty())) {
       SHERPA_ONNX_LOGE("Failed to convert %s to token IDs", text.c_str());
       return {};
     }
 
-    if (model_->AddBlank() && config_.model.vits.data_dir.empty()) {
+    // TODO(fangjun): add blank inside the frontend, not here
+    if (meta_data.add_blank && config_.model.vits.data_dir.empty() &&
+        meta_data.frontend != "characters") {
       for (auto &k : x) {
         k = AddBlank(k);
       }
@@ -118,7 +193,11 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
     int32_t x_size = static_cast<int32_t>(x.size());
 
     if (config_.max_num_sentences <= 0 || x_size <= config_.max_num_sentences) {
-      return Process(x, sid, speed);
+      auto ans = Process(x, sid, speed);
+      if (callback) {
+        callback(ans.samples.data(), ans.samples.size(), 1.0);
+      }
+      return ans;
     }
 
     // the input text is too long, we process sentences within it in batches
@@ -149,10 +228,17 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
       ans.sample_rate = audio.sample_rate;
       ans.samples.insert(ans.samples.end(), audio.samples.begin(),
                          audio.samples.end());
+      if (callback) {
+        callback(audio.samples.data(), audio.samples.size(),
+                 b * 1.0 / num_batches);
+        // Caution(fangjun): audio is freed when the callback returns, so users
+        // should copy the data if they want to access the data after
+        // the callback returns to avoid segmentation fault.
+      }
     }
 
     batch.clear();
-    while (k < x.size()) {
+    while (k < static_cast<int32_t>(x.size())) {
       batch.push_back(std::move(x[k]));
       ++k;
     }
@@ -162,6 +248,12 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
       ans.sample_rate = audio.sample_rate;
       ans.samples.insert(ans.samples.end(), audio.samples.begin(),
                          audio.samples.end());
+      if (callback) {
+        callback(audio.samples.data(), audio.samples.size(), 1.0);
+        // Caution(fangjun): audio is freed when the callback returns, so users
+        // should copy the data if they want to access the data after
+        // the callback returns to avoid segmentation fault.
+      }
     }
 
     return ans;
@@ -170,27 +262,71 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
  private:
 #if __ANDROID_API__ >= 9
   void InitFrontend(AAssetManager *mgr) {
-    if (model_->IsPiper() && !config_.model.vits.data_dir.empty()) {
+    const auto &meta_data = model_->GetMetaData();
+
+    if (meta_data.frontend == "characters") {
+      frontend_ = std::make_unique<OfflineTtsCharacterFrontend>(
+          mgr, config_.model.vits.tokens, meta_data);
+    } else if ((meta_data.is_piper || meta_data.is_coqui ||
+                meta_data.is_icefall) &&
+               !config_.model.vits.data_dir.empty()) {
       frontend_ = std::make_unique<PiperPhonemizeLexicon>(
-          mgr, config_.model.vits.tokens, config_.model.vits.data_dir);
+          mgr, config_.model.vits.tokens, config_.model.vits.data_dir,
+          meta_data);
     } else {
+      if (config_.model.vits.lexicon.empty()) {
+        SHERPA_ONNX_LOGE(
+            "Not a model using characters as modeling unit. Please provide "
+            "--vits-lexicon if you leave --vits-data-dir empty");
+        exit(-1);
+      }
+
       frontend_ = std::make_unique<Lexicon>(
           mgr, config_.model.vits.lexicon, config_.model.vits.tokens,
-          model_->Punctuations(), model_->Language(), config_.model.debug,
-          model_->IsPiper());
+          meta_data.punctuations, meta_data.language, config_.model.debug);
     }
   }
 #endif
 
   void InitFrontend() {
-    if (model_->IsPiper() && !config_.model.vits.data_dir.empty()) {
+    const auto &meta_data = model_->GetMetaData();
+
+    if (meta_data.jieba && config_.model.vits.dict_dir.empty()) {
+      SHERPA_ONNX_LOGE(
+          "Please provide --vits-dict-dir for Chinese TTS models using jieba");
+      exit(-1);
+    }
+
+    if (!meta_data.jieba && !config_.model.vits.dict_dir.empty()) {
+      SHERPA_ONNX_LOGE(
+          "Current model is not using jieba but you provided --vits-dict-dir");
+      exit(-1);
+    }
+
+    if (meta_data.frontend == "characters") {
+      frontend_ = std::make_unique<OfflineTtsCharacterFrontend>(
+          config_.model.vits.tokens, meta_data);
+    } else if (meta_data.jieba && !config_.model.vits.dict_dir.empty()) {
+      frontend_ = std::make_unique<JiebaLexicon>(
+          config_.model.vits.lexicon, config_.model.vits.tokens,
+          config_.model.vits.dict_dir, model_->GetMetaData(),
+          config_.model.debug);
+    } else if ((meta_data.is_piper || meta_data.is_coqui ||
+                meta_data.is_icefall) &&
+               !config_.model.vits.data_dir.empty()) {
       frontend_ = std::make_unique<PiperPhonemizeLexicon>(
-          config_.model.vits.tokens, config_.model.vits.data_dir);
+          config_.model.vits.tokens, config_.model.vits.data_dir,
+          model_->GetMetaData());
     } else {
+      if (config_.model.vits.lexicon.empty()) {
+        SHERPA_ONNX_LOGE(
+            "Not a model using characters as modeling unit. Please provide "
+            "--vits-lexicon if you leave --vits-data-dir empty");
+        exit(-1);
+      }
       frontend_ = std::make_unique<Lexicon>(
           config_.model.vits.lexicon, config_.model.vits.tokens,
-          model_->Punctuations(), model_->Language(), config_.model.debug,
-          model_->IsPiper());
+          meta_data.punctuations, meta_data.language, config_.model.debug);
     }
   }
 
@@ -239,7 +375,7 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
     const float *p = audio.GetTensorData<float>();
 
     GeneratedAudio ans;
-    ans.sample_rate = model_->SampleRate();
+    ans.sample_rate = model_->GetMetaData().sample_rate;
     ans.samples = std::vector<float>(p, p + total);
     return ans;
   }

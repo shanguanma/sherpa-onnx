@@ -2,15 +2,15 @@ function(download_asio)
   include(FetchContent)
 
   set(asio_URL  "https://github.com/chriskohlhoff/asio/archive/refs/tags/asio-1-24-0.tar.gz")
-  set(asio_URL2  "https://huggingface.co/csukuangfj/sherpa-onnx-cmake-deps/resolve/main/asio-asio-1-24-0.tar.gz")
+  set(asio_URL2  "https://hub.nuaa.cf/chriskohlhoff/asio/archive/refs/tags/asio-1-24-0.tar.gz")
   set(asio_HASH "SHA256=cbcaaba0f66722787b1a7c33afe1befb3a012b5af3ad7da7ff0f6b8c9b7a8a5b")
 
   # If you don't have access to the Internet,
   # please pre-download asio
   set(possible_file_locations
     $ENV{HOME}/Downloads/asio-asio-1-24-0.tar.gz
-    ${PROJECT_SOURCE_DIR}/asio-asio-1-24-0.tar.gz
-    ${PROJECT_BINARY_DIR}/asio-asio-1-24-0.tar.gz
+    ${CMAKE_SOURCE_DIR}/asio-asio-1-24-0.tar.gz
+    ${CMAKE_BINARY_DIR}/asio-asio-1-24-0.tar.gz
     /tmp/asio-asio-1-24-0.tar.gz
     /star-fj/fangjun/download/github/asio-asio-1-24-0.tar.gz
   )

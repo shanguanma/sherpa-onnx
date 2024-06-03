@@ -18,7 +18,6 @@
 #endif
 
 #include <memory>
-#include <regex>  // NOLINT
 
 #include "sherpa-onnx/csrc/macros.h"
 #include "sherpa-onnx/csrc/onnx-utils.h"
@@ -26,14 +25,58 @@
 
 namespace sherpa_onnx {
 
-static void ToLowerCase(std::string *in_out) {
-  std::transform(in_out->begin(), in_out->end(), in_out->begin(),
-                 [](unsigned char c) { return std::tolower(c); });
+static std::vector<std::string> ProcessHeteronyms(
+    const std::vector<std::string> &words) {
+  std::vector<std::string> ans;
+  ans.reserve(words.size());
+
+  int32_t num_words = static_cast<int32_t>(words.size());
+  int32_t i = 0;
+  int32_t prev = -1;
+  while (i < num_words) {
+    // start of a phrase #$|
+    if ((i + 2 < num_words) && words[i] == "#" && words[i + 1] == "$" &&
+        words[i + 2] == "|") {
+      if (prev == -1) {
+        prev = i + 3;
+      }
+      i = i + 3;
+      continue;
+    }
+
+    // end of a phrase |$#
+    if ((i + 2 < num_words) && words[i] == "|" && words[i + 1] == "$" &&
+        words[i + 2] == "#") {
+      if (prev != -1) {
+        std::ostringstream os;
+        for (int32_t k = prev; k < i; ++k) {
+          if (words[k] != "|" && words[k] != "$" && words[k] != "#") {
+            os << words[k];
+          }
+        }
+        ans.push_back(os.str());
+
+        prev = -1;
+      }
+
+      i += 3;
+      continue;
+    }
+
+    if (prev == -1) {
+      // not inside a phrase
+      ans.push_back(words[i]);
+    }
+
+    ++i;
+  }
+
+  return ans;
 }
 
 // Note: We don't use SymbolTable here since tokens may contain a blank
 // in the first column
-static std::unordered_map<std::string, int32_t> ReadTokens(std::istream &is) {
+std::unordered_map<std::string, int32_t> ReadTokens(std::istream &is) {
   std::unordered_map<std::string, int32_t> token2id;
 
   std::string line;
@@ -70,7 +113,7 @@ static std::unordered_map<std::string, int32_t> ReadTokens(std::istream &is) {
   return token2id;
 }
 
-static std::vector<int32_t> ConvertTokensToIds(
+std::vector<int32_t> ConvertTokensToIds(
     const std::unordered_map<std::string, int32_t> &token2id,
     const std::vector<std::string> &tokens) {
   std::vector<int32_t> ids;
@@ -88,8 +131,8 @@ static std::vector<int32_t> ConvertTokensToIds(
 
 Lexicon::Lexicon(const std::string &lexicon, const std::string &tokens,
                  const std::string &punctuations, const std::string &language,
-                 bool debug /*= false*/, bool is_piper /*= false*/)
-    : debug_(debug), is_piper_(is_piper) {
+                 bool debug /*= false*/)
+    : debug_(debug) {
   InitLanguage(language);
 
   {
@@ -108,9 +151,9 @@ Lexicon::Lexicon(const std::string &lexicon, const std::string &tokens,
 #if __ANDROID_API__ >= 9
 Lexicon::Lexicon(AAssetManager *mgr, const std::string &lexicon,
                  const std::string &tokens, const std::string &punctuations,
-                 const std::string &language, bool debug /*= false*/,
-                 bool is_piper /*= false*/)
-    : debug_(debug), is_piper_(is_piper) {
+                 const std::string &language, bool debug /*= false*/
+                 )
+    : debug_(debug) {
   InitLanguage(language);
 
   {
@@ -132,16 +175,10 @@ Lexicon::Lexicon(AAssetManager *mgr, const std::string &lexicon,
 std::vector<std::vector<int64_t>> Lexicon::ConvertTextToTokenIds(
     const std::string &text, const std::string & /*voice*/ /*= ""*/) const {
   switch (language_) {
-    case Language::kEnglish:
-      return ConvertTextToTokenIdsEnglish(text);
-    case Language::kGerman:
-      return ConvertTextToTokenIdsGerman(text);
-    case Language::kSpanish:
-      return ConvertTextToTokenIdsSpanish(text);
-    case Language::kFrench:
-      return ConvertTextToTokenIdsFrench(text);
     case Language::kChinese:
       return ConvertTextToTokenIdsChinese(text);
+    case Language::kNotChinese:
+      return ConvertTextToTokenIdsNotChinese(text);
     default:
       SHERPA_ONNX_LOGE("Unknown language: %d", static_cast<int32_t>(language_));
       exit(-1);
@@ -151,37 +188,12 @@ std::vector<std::vector<int64_t>> Lexicon::ConvertTextToTokenIds(
 }
 
 std::vector<std::vector<int64_t>> Lexicon::ConvertTextToTokenIdsChinese(
-    const std::string &text) const {
-  std::vector<std::string> words;
-  if (pattern_) {
-    // Handle polyphones
-    size_t pos = 0;
-    auto begin = std::sregex_iterator(text.begin(), text.end(), *pattern_);
-    auto end = std::sregex_iterator();
-    for (std::sregex_iterator i = begin; i != end; ++i) {
-      std::smatch match = *i;
-      if (pos < match.position()) {
-        auto this_segment = text.substr(pos, match.position() - pos);
-        auto this_segment_words = SplitUtf8(this_segment);
-        words.insert(words.end(), this_segment_words.begin(),
-                     this_segment_words.end());
-        pos = match.position() + match.length();
-      } else if (pos == match.position()) {
-        pos = match.position() + match.length();
-      }
+    const std::string &_text) const {
+  std::string text(_text);
+  ToLowerCase(&text);
 
-      words.push_back(match.str());
-    }
-
-    if (pos < text.size()) {
-      auto this_segment = text.substr(pos, text.size() - pos);
-      auto this_segment_words = SplitUtf8(this_segment);
-      words.insert(words.end(), this_segment_words.begin(),
-                   this_segment_words.end());
-    }
-  } else {
-    words = SplitUtf8(text);
-  }
+  std::vector<std::string> words = SplitUtf8(text);
+  words = ProcessHeteronyms(words);
 
   if (debug_) {
     fprintf(stderr, "Input text in string: %s\n", text.c_str());
@@ -197,7 +209,8 @@ std::vector<std::vector<int64_t>> Lexicon::ConvertTextToTokenIdsChinese(
     fprintf(stderr, "\n");
   }
 
-  std::vector<int64_t> ans;
+  std::vector<std::vector<int64_t>> ans;
+  std::vector<int64_t> this_sentence;
 
   int32_t blank = -1;
   if (token2id_.count(" ")) {
@@ -211,16 +224,40 @@ std::vector<std::vector<int64_t>> Lexicon::ConvertTextToTokenIdsChinese(
     eos = token2id_.at("eos");
   }
 
+  int32_t pad = -1;
+  if (token2id_.count("#0")) {
+    pad = token2id_.at("#0");
+  }
+
   if (sil != -1) {
-    ans.push_back(sil);
+    this_sentence.push_back(sil);
   }
 
   for (const auto &w : words) {
-    if (punctuations_.count(w)) {
-      if (token2id_.count(w)) {
-        ans.push_back(token2id_.at(w));
-      } else if (sil != -1) {
-        ans.push_back(sil);
+    if (w == "." || w == ";" || w == "!" || w == "?" || w == "-" || w == ":" ||
+        w == "。" || w == "；" || w == "！" || w == "？" || w == "：" ||
+        w == "”" ||
+        // not sentence break
+        w == "," || w == "“" || w == "，" || w == "、") {
+      if (punctuations_.count(w)) {
+        if (token2id_.count(w)) {
+          this_sentence.push_back(token2id_.at(w));
+        } else if (pad != -1) {
+          this_sentence.push_back(pad);
+        } else if (sil != -1) {
+          this_sentence.push_back(sil);
+        }
+      }
+
+      if (w != "," && w != "“" && w != "，" && w != "、") {
+        if (eos != -1) {
+          this_sentence.push_back(eos);
+        }
+        ans.push_back(std::move(this_sentence));
+
+        if (sil != -1) {
+          this_sentence.push_back(sil);
+        }
       }
       continue;
     }
@@ -231,24 +268,26 @@ std::vector<std::vector<int64_t>> Lexicon::ConvertTextToTokenIdsChinese(
     }
 
     const auto &token_ids = word2ids_.at(w);
-    ans.insert(ans.end(), token_ids.begin(), token_ids.end());
+    this_sentence.insert(this_sentence.end(), token_ids.begin(),
+                         token_ids.end());
     if (blank != -1) {
-      ans.push_back(blank);
+      this_sentence.push_back(blank);
     }
   }
 
   if (sil != -1) {
-    ans.push_back(sil);
+    this_sentence.push_back(sil);
   }
 
   if (eos != -1) {
-    ans.push_back(eos);
+    this_sentence.push_back(eos);
   }
+  ans.push_back(std::move(this_sentence));
 
-  return {ans};
+  return ans;
 }
 
-std::vector<std::vector<int64_t>> Lexicon::ConvertTextToTokenIdsEnglish(
+std::vector<std::vector<int64_t>> Lexicon::ConvertTextToTokenIdsNotChinese(
     const std::string &_text) const {
   std::string text(_text);
   ToLowerCase(&text);
@@ -271,14 +310,22 @@ std::vector<std::vector<int64_t>> Lexicon::ConvertTextToTokenIdsEnglish(
 
   int32_t blank = token2id_.at(" ");
 
-  std::vector<int64_t> ans;
-  if (is_piper_ && token2id_.count("^")) {
-    ans.push_back(token2id_.at("^"));  // sos
-  }
+  std::vector<std::vector<int64_t>> ans;
+  std::vector<int64_t> this_sentence;
 
   for (const auto &w : words) {
-    if (punctuations_.count(w)) {
-      ans.push_back(token2id_.at(w));
+    if (w == "." || w == ";" || w == "!" || w == "?" || w == "-" || w == ":" ||
+        // not sentence break
+        w == ",") {
+      if (punctuations_.count(w)) {
+        this_sentence.push_back(token2id_.at(w));
+      }
+
+      if (w != ",") {
+        this_sentence.push_back(blank);
+        ans.push_back(std::move(this_sentence));
+      }
+
       continue;
     }
 
@@ -288,20 +335,21 @@ std::vector<std::vector<int64_t>> Lexicon::ConvertTextToTokenIdsEnglish(
     }
 
     const auto &token_ids = word2ids_.at(w);
-    ans.insert(ans.end(), token_ids.begin(), token_ids.end());
-    ans.push_back(blank);
+    this_sentence.insert(this_sentence.end(), token_ids.begin(),
+                         token_ids.end());
+    this_sentence.push_back(blank);
   }
 
-  if (!ans.empty()) {
+  if (!this_sentence.empty()) {
     // remove the last blank
-    ans.resize(ans.size() - 1);
+    this_sentence.resize(this_sentence.size() - 1);
   }
 
-  if (is_piper_ && token2id_.count("$")) {
-    ans.push_back(token2id_.at("$"));  // eos
+  if (!this_sentence.empty()) {
+    ans.push_back(std::move(this_sentence));
   }
 
-  return {ans};
+  return ans;
 }
 
 void Lexicon::InitTokens(std::istream &is) { token2id_ = ReadTokens(is); }
@@ -309,16 +357,10 @@ void Lexicon::InitTokens(std::istream &is) { token2id_ = ReadTokens(is); }
 void Lexicon::InitLanguage(const std::string &_lang) {
   std::string lang(_lang);
   ToLowerCase(&lang);
-  if (lang == "english") {
-    language_ = Language::kEnglish;
-  } else if (lang == "german") {
-    language_ = Language::kGerman;
-  } else if (lang == "spanish") {
-    language_ = Language::kSpanish;
-  } else if (lang == "french") {
-    language_ = Language::kFrench;
-  } else if (lang == "chinese") {
+  if (lang == "chinese") {
     language_ = Language::kChinese;
+  } else if (!lang.empty()) {
+    language_ = Language::kNotChinese;
   } else {
     SHERPA_ONNX_LOGE("Unknown language: %s", _lang.c_str());
     exit(-1);
@@ -330,9 +372,6 @@ void Lexicon::InitLexicon(std::istream &is) {
   std::vector<std::string> token_list;
   std::string line;
   std::string phone;
-
-  std::ostringstream os;
-  std::string sep;
 
   while (std::getline(is, line)) {
     std::istringstream iss(line);
@@ -355,17 +394,8 @@ void Lexicon::InitLexicon(std::istream &is) {
     if (ids.empty()) {
       continue;
     }
-    if (language_ == Language::kChinese && word.size() > 3) {
-      // this is not a single word;
-      os << sep << word;
-      sep = "|";
-    }
 
     word2ids_.insert({std::move(word), std::move(ids)});
-  }
-
-  if (!sep.empty()) {
-    pattern_ = std::make_unique<std::regex>(os.str());
   }
 }
 

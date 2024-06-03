@@ -28,12 +28,18 @@ void OfflineRecognizerConfig::Register(ParseOptions *po) {
   po->Register("max-active-paths", &max_active_paths,
                "Used only when decoding_method is modified_beam_search");
 
+  po->Register("blank-penalty", &blank_penalty,
+               "The penalty applied on blank symbol during decoding. "
+               "Note: It is a positive value. "
+               "Increasing value will lead to lower deletion at the cost"
+               "of higher insertions. "
+               "Currently only applicable for transducer models.");
+
   po->Register(
       "hotwords-file", &hotwords_file,
-      "The file containing hotwords, one words/phrases per line, and for each"
-      "phrase the bpe/cjkchar are separated by a space. For example: "
-      "▁HE LL O ▁WORLD"
-      "你 好 世 界");
+      "The file containing hotwords, one words/phrases per line, For example: "
+      "HELLO WORLD"
+      "你好世界");
 
   po->Register("hotwords-score", &hotwords_score,
                "The bonus score for each token in context word/phrase. "
@@ -60,6 +66,12 @@ bool OfflineRecognizerConfig::Validate() const {
     return false;
   }
 
+  if (!ctc_fst_decoder_config.graph.empty() &&
+      !ctc_fst_decoder_config.Validate()) {
+    SHERPA_ONNX_LOGE("Errors in fst_decoder");
+    return false;
+  }
+
   return model_config.Validate();
 }
 
@@ -74,7 +86,8 @@ std::string OfflineRecognizerConfig::ToString() const {
   os << "decoding_method=\"" << decoding_method << "\", ";
   os << "max_active_paths=" << max_active_paths << ", ";
   os << "hotwords_file=\"" << hotwords_file << "\", ";
-  os << "hotwords_score=" << hotwords_score << ")";
+  os << "hotwords_score=" << hotwords_score << ", ";
+  os << "blank_penalty=" << blank_penalty << ")";
 
   return os.str();
 }

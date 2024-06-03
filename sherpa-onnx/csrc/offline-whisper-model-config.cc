@@ -32,16 +32,35 @@ void OfflineWhisperModelConfig::Register(ParseOptions *po) {
                "Valid values: transcribe, translate. "
                "Note that for non-multilingual models, it supports "
                "only 'transcribe'");
+
+  po->Register(
+      "whisper-tail-paddings", &tail_paddings,
+      "Suggested value: 50 for English models. 300 for multilingual models. "
+      "Since we have removed the 30-second constraint, we need to add some "
+      "tail padding frames "
+      "so that whisper can detect the eot token. Leave it to -1 to use 1000.");
 }
 
 bool OfflineWhisperModelConfig::Validate() const {
+  if (encoder.empty()) {
+    SHERPA_ONNX_LOGE("Please provide --whisper-encoder");
+    return false;
+  }
+
   if (!FileExists(encoder)) {
-    SHERPA_ONNX_LOGE("whisper encoder file %s does not exist", encoder.c_str());
+    SHERPA_ONNX_LOGE("whisper encoder file '%s' does not exist",
+                     encoder.c_str());
+    return false;
+  }
+
+  if (decoder.empty()) {
+    SHERPA_ONNX_LOGE("Please provide --whisper-decoder");
     return false;
   }
 
   if (!FileExists(decoder)) {
-    SHERPA_ONNX_LOGE("whisper decoder file %s does not exist", decoder.c_str());
+    SHERPA_ONNX_LOGE("whisper decoder file '%s' does not exist",
+                     decoder.c_str());
     return false;
   }
 
@@ -63,7 +82,8 @@ std::string OfflineWhisperModelConfig::ToString() const {
   os << "encoder=\"" << encoder << "\", ";
   os << "decoder=\"" << decoder << "\", ";
   os << "language=\"" << language << "\", ";
-  os << "task=\"" << task << "\")";
+  os << "task=\"" << task << "\", ";
+  os << "tail_paddings=" << tail_paddings << ")";
 
   return os.str();
 }

@@ -60,6 +60,14 @@ func sherpaOnnxOnlineParaformerModelConfig(
   )
 }
 
+func sherpaOnnxOnlineZipformer2CtcModelConfig(
+  model: String = ""
+) -> SherpaOnnxOnlineZipformer2CtcModelConfig {
+  return SherpaOnnxOnlineZipformer2CtcModelConfig(
+    model: toCPointer(model)
+  )
+}
+
 /// Return an instance of SherpaOnnxOnlineModelConfig.
 ///
 /// Please refer to
@@ -75,6 +83,8 @@ func sherpaOnnxOnlineModelConfig(
   tokens: String,
   transducer: SherpaOnnxOnlineTransducerModelConfig = sherpaOnnxOnlineTransducerModelConfig(),
   paraformer: SherpaOnnxOnlineParaformerModelConfig = sherpaOnnxOnlineParaformerModelConfig(),
+  zipformer2Ctc: SherpaOnnxOnlineZipformer2CtcModelConfig =
+    sherpaOnnxOnlineZipformer2CtcModelConfig(),
   numThreads: Int = 1,
   provider: String = "cpu",
   debug: Int = 0,
@@ -83,6 +93,7 @@ func sherpaOnnxOnlineModelConfig(
   return SherpaOnnxOnlineModelConfig(
     transducer: transducer,
     paraformer: paraformer,
+    zipformer2_ctc: zipformer2Ctc,
     tokens: toCPointer(tokens),
     num_threads: Int32(numThreads),
     provider: toCPointer(provider),
@@ -100,6 +111,15 @@ func sherpaOnnxFeatureConfig(
     feature_dim: Int32(featureDim))
 }
 
+func sherpaOnnxOnlineCtcFstDecoderConfig(
+  graph: String = "",
+  maxActive: Int = 3000
+) -> SherpaOnnxOnlineCtcFstDecoderConfig {
+  return SherpaOnnxOnlineCtcFstDecoderConfig(
+    graph: toCPointer(graph),
+    max_active: Int32(maxActive))
+}
+
 func sherpaOnnxOnlineRecognizerConfig(
   featConfig: SherpaOnnxFeatureConfig,
   modelConfig: SherpaOnnxOnlineModelConfig,
@@ -110,7 +130,8 @@ func sherpaOnnxOnlineRecognizerConfig(
   decodingMethod: String = "greedy_search",
   maxActivePaths: Int = 4,
   hotwordsFile: String = "",
-  hotwordsScore: Float = 1.5
+  hotwordsScore: Float = 1.5,
+  ctcFstDecoderConfig: SherpaOnnxOnlineCtcFstDecoderConfig = sherpaOnnxOnlineCtcFstDecoderConfig()
 ) -> SherpaOnnxOnlineRecognizerConfig {
   return SherpaOnnxOnlineRecognizerConfig(
     feat_config: featConfig,
@@ -122,7 +143,9 @@ func sherpaOnnxOnlineRecognizerConfig(
     rule2_min_trailing_silence: rule2MinTrailingSilence,
     rule3_min_utterance_length: rule3MinUtteranceLength,
     hotwords_file: toCPointer(hotwordsFile),
-    hotwords_score: hotwordsScore)
+    hotwords_score: hotwordsScore,
+    ctc_fst_decoder_config: ctcFstDecoderConfig
+  )
 }
 
 /// Wrapper for recognition result.
@@ -177,7 +200,7 @@ class SherpaOnnxOnlineRecongitionResult {
 class SherpaOnnxRecognizer {
   /// A pointer to the underlying counterpart in C
   let recognizer: OpaquePointer!
-  let stream: OpaquePointer!
+  var stream: OpaquePointer!
 
   /// Constructor taking a model config
   init(
@@ -226,8 +249,23 @@ class SherpaOnnxRecognizer {
 
   /// Reset the recognizer, which clears the neural network model state
   /// and the state for decoding.
-  func reset() {
-    Reset(recognizer, stream)
+  /// If hotwords is an empty string, it just recreates the decoding stream
+  /// If hotwords is not empty, it will create a new decoding stream with
+  /// the given hotWords appended to the default hotwords.
+  func reset(hotwords: String? = nil) {
+    guard let words = hotwords, !words.isEmpty else {
+      Reset(recognizer, stream)
+      return
+    }
+
+    words.withCString { cString in
+      let newStream = CreateOnlineStreamWithHotwords(recognizer, cString)
+      // lock while release and replace stream
+      objc_sync_enter(self)
+      DestroyOnlineStream(stream)
+      stream = newStream
+      objc_sync_exit(self)
+    }
   }
 
   /// Signal that no more audio samples would be available.
@@ -274,11 +312,17 @@ func sherpaOnnxOfflineNemoEncDecCtcModelConfig(
 
 func sherpaOnnxOfflineWhisperModelConfig(
   encoder: String = "",
-  decoder: String = ""
+  decoder: String = "",
+  language: String = "",
+  task: String = "transcribe",
+  tailPaddings: Int = -1
 ) -> SherpaOnnxOfflineWhisperModelConfig {
   return SherpaOnnxOfflineWhisperModelConfig(
     encoder: toCPointer(encoder),
-    decoder: toCPointer(decoder)
+    decoder: toCPointer(decoder),
+    language: toCPointer(language),
+    task: toCPointer(task),
+    tail_paddings: Int32(tailPaddings)
   )
 }
 
@@ -581,7 +625,8 @@ func sherpaOnnxOfflineTtsVitsModelConfig(
   dataDir: String = "",
   noiseScale: Float = 0.667,
   noiseScaleW: Float = 0.8,
-  lengthScale: Float = 1.0
+  lengthScale: Float = 1.0,
+  dictDir: String = ""
 ) -> SherpaOnnxOfflineTtsVitsModelConfig {
   return SherpaOnnxOfflineTtsVitsModelConfig(
     model: toCPointer(model),
@@ -590,7 +635,8 @@ func sherpaOnnxOfflineTtsVitsModelConfig(
     data_dir: toCPointer(dataDir),
     noise_scale: noiseScale,
     noise_scale_w: noiseScaleW,
-    length_scale: lengthScale)
+    length_scale: lengthScale,
+    dict_dir: toCPointer(dictDir))
 }
 
 func sherpaOnnxOfflineTtsModelConfig(
@@ -610,12 +656,14 @@ func sherpaOnnxOfflineTtsModelConfig(
 func sherpaOnnxOfflineTtsConfig(
   model: SherpaOnnxOfflineTtsModelConfig,
   ruleFsts: String = "",
-  maxNumSenetences: Int = 2
+  ruleFars: String = "",
+  maxNumSentences: Int = 2
 ) -> SherpaOnnxOfflineTtsConfig {
   return SherpaOnnxOfflineTtsConfig(
     model: model,
     rule_fsts: toCPointer(ruleFsts),
-    max_num_sentences: Int32(maxNumSenetences)
+    max_num_sentences: Int32(maxNumSentences),
+    rule_fars: toCPointer(ruleFars)
   )
 }
 
@@ -681,5 +729,88 @@ class SherpaOnnxOfflineTtsWrapper {
       tts, toCPointer(text), Int32(sid), speed)
 
     return SherpaOnnxGeneratedAudioWrapper(audio: audio)
+  }
+}
+
+// spoken language identification
+
+func sherpaOnnxSpokenLanguageIdentificationWhisperConfig(
+  encoder: String,
+  decoder: String,
+  tailPaddings: Int = -1
+) -> SherpaOnnxSpokenLanguageIdentificationWhisperConfig {
+  return SherpaOnnxSpokenLanguageIdentificationWhisperConfig(
+    encoder: toCPointer(encoder),
+    decoder: toCPointer(decoder),
+    tail_paddings: Int32(tailPaddings))
+}
+
+func sherpaOnnxSpokenLanguageIdentificationConfig(
+  whisper: SherpaOnnxSpokenLanguageIdentificationWhisperConfig,
+  numThreads: Int = 1,
+  debug: Int = 0,
+  provider: String = "cpu"
+) -> SherpaOnnxSpokenLanguageIdentificationConfig {
+  return SherpaOnnxSpokenLanguageIdentificationConfig(
+    whisper: whisper,
+    num_threads: Int32(numThreads),
+    debug: Int32(debug),
+    provider: toCPointer(provider))
+}
+
+class SherpaOnnxSpokenLanguageIdentificationResultWrapper {
+  /// A pointer to the underlying counterpart in C
+  let result: UnsafePointer<SherpaOnnxSpokenLanguageIdentificationResult>!
+
+  /// Return the detected language.
+  /// en for English
+  /// zh for Chinese
+  /// es for Spanish
+  /// de for German
+  /// etc.
+  var lang: String {
+    return String(cString: result.pointee.lang)
+  }
+
+  init(result: UnsafePointer<SherpaOnnxSpokenLanguageIdentificationResult>!) {
+    self.result = result
+  }
+
+  deinit {
+    if let result {
+      SherpaOnnxDestroySpokenLanguageIdentificationResult(result)
+    }
+  }
+}
+
+class SherpaOnnxSpokenLanguageIdentificationWrapper {
+  /// A pointer to the underlying counterpart in C
+  let slid: OpaquePointer!
+
+  init(
+    config: UnsafePointer<SherpaOnnxSpokenLanguageIdentificationConfig>!
+  ) {
+    slid = SherpaOnnxCreateSpokenLanguageIdentification(config)
+  }
+
+  deinit {
+    if let slid {
+      SherpaOnnxDestroySpokenLanguageIdentification(slid)
+    }
+  }
+
+  func decode(samples: [Float], sampleRate: Int = 16000)
+    -> SherpaOnnxSpokenLanguageIdentificationResultWrapper
+  {
+    let stream: OpaquePointer! = SherpaOnnxSpokenLanguageIdentificationCreateOfflineStream(slid)
+    AcceptWaveformOffline(stream, Int32(sampleRate), samples, Int32(samples.count))
+
+    let result: UnsafePointer<SherpaOnnxSpokenLanguageIdentificationResult>? =
+      SherpaOnnxSpokenLanguageIdentificationCompute(
+        slid,
+        stream)
+
+    DestroyOfflineStream(stream)
+    return SherpaOnnxSpokenLanguageIdentificationResultWrapper(result: result)
   }
 }

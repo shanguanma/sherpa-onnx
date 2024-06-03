@@ -6,7 +6,9 @@
 #define SHERPA_ONNX_CSRC_ONLINE_RECOGNIZER_CTC_IMPL_H_
 
 #include <algorithm>
+#include <ios>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -14,6 +16,7 @@
 #include "sherpa-onnx/csrc/file-utils.h"
 #include "sherpa-onnx/csrc/macros.h"
 #include "sherpa-onnx/csrc/online-ctc-decoder.h"
+#include "sherpa-onnx/csrc/online-ctc-fst-decoder.h"
 #include "sherpa-onnx/csrc/online-ctc-greedy-search-decoder.h"
 #include "sherpa-onnx/csrc/online-ctc-model.h"
 #include "sherpa-onnx/csrc/online-recognizer-impl.h"
@@ -35,6 +38,17 @@ static OnlineRecognizerResult Convert(const OnlineCtcDecoderResult &src,
     auto sym = sym_table[i];
 
     r.text.append(sym);
+
+    if (sym.size() == 1 && (sym[0] < 0x20 || sym[0] > 0x7e)) {
+      // for byte bpe models
+      // (but don't rewrite printable characters 0x20..0x7e,
+      //  which collide with standard BPE units)
+      std::ostringstream os;
+      os << "<0x" << std::hex << std::uppercase
+         << (static_cast<int32_t>(sym[0]) & 0xff) << ">";
+      sym = os.str();
+    }
+
     r.tokens.push_back(std::move(sym));
   }
 
@@ -86,6 +100,7 @@ class OnlineRecognizerCtcImpl : public OnlineRecognizerImpl {
   std::unique_ptr<OnlineStream> CreateStream() const override {
     auto stream = std::make_unique<OnlineStream>(config_.feat_config);
     stream->SetStates(model_->GetInitStates());
+    stream->SetFasterDecoder(decoder_->CreateFasterDecoder());
 
     return stream;
   }
@@ -96,8 +111,67 @@ class OnlineRecognizerCtcImpl : public OnlineRecognizerImpl {
   }
 
   void DecodeStreams(OnlineStream **ss, int32_t n) const override {
+    if (n == 1 || !model_->SupportBatchProcessing()) {
+      for (int32_t i = 0; i != n; ++i) {
+        DecodeStream(ss[i]);
+      }
+      return;
+    }
+
+    // batch processing
+    int32_t chunk_length = model_->ChunkLength();
+    int32_t chunk_shift = model_->ChunkShift();
+
+    int32_t feat_dim = ss[0]->FeatureDim();
+
+    std::vector<OnlineCtcDecoderResult> results(n);
+    std::vector<float> features_vec(n * chunk_length * feat_dim);
+    std::vector<std::vector<Ort::Value>> states_vec(n);
+    std::vector<int64_t> all_processed_frames(n);
+
     for (int32_t i = 0; i != n; ++i) {
-      DecodeStream(ss[i]);
+      const auto num_processed_frames = ss[i]->GetNumProcessedFrames();
+      std::vector<float> features =
+          ss[i]->GetFrames(num_processed_frames, chunk_length);
+
+      // Question: should num_processed_frames include chunk_shift?
+      ss[i]->GetNumProcessedFrames() += chunk_shift;
+
+      std::copy(features.begin(), features.end(),
+                features_vec.data() + i * chunk_length * feat_dim);
+
+      results[i] = std::move(ss[i]->GetCtcResult());
+      states_vec[i] = std::move(ss[i]->GetStates());
+      all_processed_frames[i] = num_processed_frames;
+    }
+
+    auto memory_info =
+        Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
+
+    std::array<int64_t, 3> x_shape{n, chunk_length, feat_dim};
+
+    Ort::Value x = Ort::Value::CreateTensor(memory_info, features_vec.data(),
+                                            features_vec.size(), x_shape.data(),
+                                            x_shape.size());
+
+    auto states = model_->StackStates(std::move(states_vec));
+    int32_t num_states = states.size();
+    auto out = model_->Forward(std::move(x), std::move(states));
+    std::vector<Ort::Value> out_states;
+    out_states.reserve(num_states);
+
+    for (int32_t k = 1; k != num_states + 1; ++k) {
+      out_states.push_back(std::move(out[k]));
+    }
+
+    std::vector<std::vector<Ort::Value>> next_states =
+        model_->UnStackStates(std::move(out_states));
+
+    decoder_->Decode(std::move(out[0]), &results, ss, n);
+
+    for (int32_t k = 0; k != n; ++k) {
+      ss[k]->SetCtcResult(results[k]);
+      ss[k]->SetStates(std::move(next_states[k]));
     }
   }
 
@@ -142,6 +216,8 @@ class OnlineRecognizerCtcImpl : public OnlineRecognizerImpl {
     // clear states
     s->SetStates(model_->GetInitStates());
 
+    s->GetFasterDecoderProcessedFrames() = 0;
+
     // Note: We only update counters. The underlying audio samples
     // are not discarded.
     s->Reset();
@@ -149,30 +225,34 @@ class OnlineRecognizerCtcImpl : public OnlineRecognizerImpl {
 
  private:
   void InitDecoder() {
-    if (config_.decoding_method == "greedy_search") {
-      if (!sym_.contains("<blk>") && !sym_.contains("<eps>") &&
-          !sym_.contains("<blank>")) {
-        SHERPA_ONNX_LOGE(
-            "We expect that tokens.txt contains "
-            "the symbol <blk> or <eps> or <blank> and its ID.");
-        exit(-1);
-      }
+    if (!sym_.Contains("<blk>") && !sym_.Contains("<eps>") &&
+        !sym_.Contains("<blank>")) {
+      SHERPA_ONNX_LOGE(
+          "We expect that tokens.txt contains "
+          "the symbol <blk> or <eps> or <blank> and its ID.");
+      exit(-1);
+    }
 
-      int32_t blank_id = 0;
-      if (sym_.contains("<blk>")) {
-        blank_id = sym_["<blk>"];
-      } else if (sym_.contains("<eps>")) {
-        // for tdnn models of the yesno recipe from icefall
-        blank_id = sym_["<eps>"];
-      } else if (sym_.contains("<blank>")) {
-        // for WeNet CTC models
-        blank_id = sym_["<blank>"];
-      }
+    int32_t blank_id = 0;
+    if (sym_.Contains("<blk>")) {
+      blank_id = sym_["<blk>"];
+    } else if (sym_.Contains("<eps>")) {
+      // for tdnn models of the yesno recipe from icefall
+      blank_id = sym_["<eps>"];
+    } else if (sym_.Contains("<blank>")) {
+      // for WeNet CTC models
+      blank_id = sym_["<blank>"];
+    }
 
+    if (!config_.ctc_fst_decoder_config.graph.empty()) {
+      decoder_ = std::make_unique<OnlineCtcFstDecoder>(
+          config_.ctc_fst_decoder_config, blank_id);
+    } else if (config_.decoding_method == "greedy_search") {
       decoder_ = std::make_unique<OnlineCtcGreedySearchDecoder>(blank_id);
     } else {
-      SHERPA_ONNX_LOGE("Unsupported decoding method: %s",
-                       config_.decoding_method.c_str());
+      SHERPA_ONNX_LOGE(
+          "Unsupported decoding method: %s for streaming CTC models",
+          config_.decoding_method.c_str());
       exit(-1);
     }
   }
@@ -209,7 +289,7 @@ class OnlineRecognizerCtcImpl : public OnlineRecognizerImpl {
     std::vector<OnlineCtcDecoderResult> results(1);
     results[0] = std::move(s->GetCtcResult());
 
-    decoder_->Decode(std::move(out[0]), &results);
+    decoder_->Decode(std::move(out[0]), &results, &s, 1);
     s->SetCtcResult(results[0]);
   }
 

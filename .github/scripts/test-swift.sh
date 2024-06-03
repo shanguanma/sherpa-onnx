@@ -7,9 +7,16 @@ echo "pwd: $PWD"
 cd swift-api-examples
 ls -lh
 
+./run-streaming-hlg-decode-file.sh
+rm ./streaming-hlg-decode-file
+rm -rf sherpa-onnx-streaming-zipformer-ctc-small-2024-03-18
+
+./run-spoken-language-identification.sh
+rm -rf sherpa-onnx-whisper*
+
 mkdir -p /Users/fangjun/Desktop
 pushd /Users/fangjun/Desktop
-wget -q https://huggingface.co/csukuangfj/test-data/resolve/main/Obama.wav
+curl -SL -O https://huggingface.co/csukuangfj/test-data/resolve/main/Obama.wav
 ls -lh
 popd
 
@@ -22,7 +29,11 @@ cat /Users/fangjun/Desktop/Obama.srt
 ls -lh
 
 ./run-decode-file.sh
+rm decode-file
+sed -i.bak  '20d' ./decode-file.swift
+./run-decode-file.sh
 
 ./run-decode-file-non-streaming.sh
+
 
 ls -lh

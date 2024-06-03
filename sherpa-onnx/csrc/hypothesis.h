@@ -28,6 +28,22 @@ struct Hypothesis {
   // on which ys[i] is decoded.
   std::vector<int32_t> timestamps;
 
+  // The acoustic probability for each token in ys.
+  // Used for keyword spotting task.
+  // For transducer mofified beam-search and greedy-search,
+  // this is filled with log_posterior scores.
+  std::vector<float> ys_probs;
+
+  // lm_probs[i] contains the lm score for each token in ys.
+  // Used only in transducer mofified beam-search.
+  // Elements filled only if LM is used.
+  std::vector<float> lm_probs;
+
+  // context_scores[i] contains the context-graph score for each token in ys.
+  // Used only in transducer mofified beam-search.
+  // Elements filled only if `ContextGraph` is used.
+  std::vector<float> context_scores;
+
   // The total score of ys in log space.
   // It contains only acoustic scores
   double log_prob = 0;
@@ -113,8 +129,8 @@ class Hypotheses {
     return os.str();
   }
 
-  const auto begin() const { return hyps_dict_.begin(); }
-  const auto end() const { return hyps_dict_.end(); }
+  auto begin() const { return hyps_dict_.begin(); }
+  auto end() const { return hyps_dict_.end(); }
 
   auto begin() { return hyps_dict_.begin(); }
   auto end() { return hyps_dict_.end(); }

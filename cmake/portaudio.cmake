@@ -2,7 +2,7 @@ function(download_portaudio)
   include(FetchContent)
 
   set(portaudio_URL  "http://files.portaudio.com/archives/pa_stable_v190700_20210406.tgz")
-  set(portaudio_URL2 "https://huggingface.co/csukuangfj/sherpa-onnx-cmake-deps/resolve/main/pa_stable_v190700_20210406.tgz")
+  set(portaudio_URL2 "https://hf-mirror.com/csukuangfj/sherpa-onnx-cmake-deps/resolve/main/pa_stable_v190700_20210406.tgz")
   set(portaudio_HASH "SHA256=47efbf42c77c19a05d22e627d42873e991ec0c1357219c0d74ce6a2948cb2def")
 
   # If you don't have access to the Internet, please download it to your
@@ -10,8 +10,8 @@ function(download_portaudio)
   set(possible_file_locations
     $ENV{HOME}/Downloads/pa_stable_v190700_20210406.tgz
     $ENV{HOME}/asr/pa_stable_v190700_20210406.tgz
-    ${PROJECT_SOURCE_DIR}/pa_stable_v190700_20210406.tgz
-    ${PROJECT_BINARY_DIR}/pa_stable_v190700_20210406.tgz
+    ${CMAKE_SOURCE_DIR}/pa_stable_v190700_20210406.tgz
+    ${CMAKE_BINARY_DIR}/pa_stable_v190700_20210406.tgz
     /tmp/pa_stable_v190700_20210406.tgz
     /star-fj/fangjun/download/github/pa_stable_v190700_20210406.tgz
   )

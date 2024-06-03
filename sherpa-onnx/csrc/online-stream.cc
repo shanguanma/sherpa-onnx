@@ -51,6 +51,25 @@ class OnlineStream::Impl {
 
   OnlineTransducerDecoderResult &GetResult() { return result_; }
 
+  void SetKeywordResult(const TransducerKeywordResult &r) {
+    keyword_result_ = r;
+  }
+  TransducerKeywordResult &GetKeywordResult(bool remove_duplicates) {
+    if (remove_duplicates) {
+      if (!prev_keyword_result_.timestamps.empty() &&
+          !keyword_result_.timestamps.empty() &&
+          keyword_result_.timestamps[0] <=
+              prev_keyword_result_.timestamps.back()) {
+        return empty_keyword_result_;
+      } else {
+        prev_keyword_result_ = keyword_result_;
+      }
+      return keyword_result_;
+    } else {
+      return keyword_result_;
+    }
+  }
+
   OnlineCtcDecoderResult &GetCtcResult() { return ctc_result_; }
 
   void SetCtcResult(const OnlineCtcDecoderResult &r) { ctc_result_ = r; }
@@ -71,6 +90,12 @@ class OnlineStream::Impl {
 
   std::vector<Ort::Value> &GetStates() { return states_; }
 
+  void SetNeMoDecoderStates(std::vector<Ort::Value> decoder_states) {
+    decoder_states_ = std::move(decoder_states);
+  }
+
+  std::vector<Ort::Value> &GetNeMoDecoderStates() { return decoder_states_; }
+
   const ContextGraphPtr &GetContextGraph() const { return context_graph_; }
 
   std::vector<float> &GetParaformerFeatCache() {
@@ -85,6 +110,18 @@ class OnlineStream::Impl {
     return paraformer_alpha_cache_;
   }
 
+  void SetFasterDecoder(std::unique_ptr<kaldi_decoder::FasterDecoder> decoder) {
+    faster_decoder_ = std::move(decoder);
+  }
+
+  kaldi_decoder::FasterDecoder *GetFasterDecoder() const {
+    return faster_decoder_.get();
+  }
+
+  int32_t &GetFasterDecoderProcessedFrames() {
+    return faster_decoder_processed_frames_;
+  }
+
  private:
   FeatureExtractor feat_extractor_;
   /// For contextual-biasing
@@ -93,12 +130,18 @@ class OnlineStream::Impl {
   int32_t start_frame_index_ = 0;     // never reset
   int32_t segment_ = 0;
   OnlineTransducerDecoderResult result_;
+  TransducerKeywordResult prev_keyword_result_;
+  TransducerKeywordResult keyword_result_;
+  TransducerKeywordResult empty_keyword_result_;
   OnlineCtcDecoderResult ctc_result_;
   std::vector<Ort::Value> states_;  // states for transducer or ctc models
+  std::vector<Ort::Value> decoder_states_;  // states for nemo transducer models
   std::vector<float> paraformer_feat_cache_;
   std::vector<float> paraformer_encoder_out_cache_;
   std::vector<float> paraformer_alpha_cache_;
   OnlineParaformerDecoderResult paraformer_result_;
+  std::unique_ptr<kaldi_decoder::FasterDecoder> faster_decoder_;
+  int32_t faster_decoder_processed_frames_ = 0;
 };
 
 OnlineStream::OnlineStream(const FeatureExtractorConfig &config /*= {}*/,
@@ -149,6 +192,15 @@ OnlineTransducerDecoderResult &OnlineStream::GetResult() {
   return impl_->GetResult();
 }
 
+void OnlineStream::SetKeywordResult(const TransducerKeywordResult &r) {
+  impl_->SetKeywordResult(r);
+}
+
+TransducerKeywordResult &OnlineStream::GetKeywordResult(
+    bool remove_duplicates /*=false*/) {
+  return impl_->GetKeywordResult(remove_duplicates);
+}
+
 OnlineCtcDecoderResult &OnlineStream::GetCtcResult() {
   return impl_->GetCtcResult();
 }
@@ -173,8 +225,30 @@ std::vector<Ort::Value> &OnlineStream::GetStates() {
   return impl_->GetStates();
 }
 
+void OnlineStream::SetNeMoDecoderStates(
+    std::vector<Ort::Value> decoder_states) {
+  return impl_->SetNeMoDecoderStates(std::move(decoder_states));
+}
+
+std::vector<Ort::Value> &OnlineStream::GetNeMoDecoderStates() {
+  return impl_->GetNeMoDecoderStates();
+}
+
 const ContextGraphPtr &OnlineStream::GetContextGraph() const {
   return impl_->GetContextGraph();
+}
+
+void OnlineStream::SetFasterDecoder(
+    std::unique_ptr<kaldi_decoder::FasterDecoder> decoder) {
+  impl_->SetFasterDecoder(std::move(decoder));
+}
+
+kaldi_decoder::FasterDecoder *OnlineStream::GetFasterDecoder() const {
+  return impl_->GetFasterDecoder();
+}
+
+int32_t &OnlineStream::GetFasterDecoderProcessedFrames() {
+  return impl_->GetFasterDecoderProcessedFrames();
 }
 
 std::vector<float> &OnlineStream::GetParaformerFeatCache() {

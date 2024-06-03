@@ -26,6 +26,10 @@ struct OnlineTransducerDecoderResult {
   /// timestamps[i] contains the output frame index where tokens[i] is decoded.
   std::vector<int32_t> timestamps;
 
+  std::vector<float> ys_probs;
+  std::vector<float> lm_probs;
+  std::vector<float> context_scores;
+
   // Cache decoder_out for endpointing
   Ort::Value decoder_out;
 
@@ -91,15 +95,15 @@ class OnlineTransducerDecoder {
    * online decoding case, each utterance has the same number of frames
    * and there are no paddings.
    */
-  virtual void Decode(Ort::Value encoder_out, OnlineStream **ss,
-                      std::vector<OnlineTransducerDecoderResult> *result) {
+  virtual void Decode(Ort::Value /*encoder_out*/, OnlineStream ** /*ss*/,
+                      std::vector<OnlineTransducerDecoderResult> * /*result*/) {
     SHERPA_ONNX_LOGE(
         "This interface is for OnlineTransducerModifiedBeamSearchDecoder.");
     exit(-1);
   }
 
   // used for endpointing. We need to keep decoder_out after reset
-  virtual void UpdateDecoderOut(OnlineTransducerDecoderResult *result) {}
+  virtual void UpdateDecoderOut(OnlineTransducerDecoderResult * /*result*/) {}
 };
 
 }  // namespace sherpa_onnx

@@ -1,6 +1,10 @@
 package com.k2fsa.sherpa.onnx
 
 import android.content.res.AssetManager
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioTrack
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
@@ -23,6 +27,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var generate: Button
     private lateinit var play: Button
 
+    // see
+    // https://developer.android.com/reference/kotlin/android/media/AudioTrack
+    private lateinit var track: AudioTrack
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -30,6 +38,10 @@ class MainActivity : AppCompatActivity() {
         Log.i(TAG, "Start to initialize TTS")
         initTts()
         Log.i(TAG, "Finish initializing TTS")
+
+        Log.i(TAG, "Start to initialize AudioTrack")
+        initAudioTrack()
+        Log.i(TAG, "Finish initializing AudioTrack")
 
         text = findViewById(R.id.text)
         sid = findViewById(R.id.sid)
@@ -49,6 +61,37 @@ class MainActivity : AppCompatActivity() {
         text.setText(sampleText)
 
         play.isEnabled = false
+    }
+
+    private fun initAudioTrack() {
+        val sampleRate = tts.sampleRate()
+        val bufLength = AudioTrack.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_FLOAT
+        )
+        Log.i(TAG, "sampleRate: ${sampleRate}, buffLength: ${bufLength}")
+
+        val attr = AudioAttributes.Builder().setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .build()
+
+        val format = AudioFormat.Builder()
+            .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+            .setSampleRate(sampleRate)
+            .build()
+
+        track = AudioTrack(
+            attr, format, bufLength, AudioTrack.MODE_STREAM,
+            AudioManager.AUDIO_SESSION_ID_GENERATE
+        )
+        track.play()
+    }
+
+    // this function is called from C++
+    private fun callback(samples: FloatArray) {
+        track.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
     }
 
     private fun onClickGenerate() {
@@ -79,16 +122,28 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        play.isEnabled = false
-        val audio = tts.generate(text = textStr, sid = sidInt, speed = speedFloat)
+        track.pause()
+        track.flush()
+        track.play()
 
-        val filename = application.filesDir.absolutePath + "/generated.wav"
-        val ok = audio.samples.size > 0 && audio.save(filename)
-        if (ok) {
-            play.isEnabled = true
-            // Play automatically after generation
-            onClickPlay()
-        }
+        play.isEnabled = false
+        Thread {
+            val audio = tts.generateWithCallback(
+                text = textStr,
+                sid = sidInt,
+                speed = speedFloat,
+                callback = this::callback
+            )
+
+            val filename = application.filesDir.absolutePath + "/generated.wav"
+            val ok = audio.samples.size > 0 && audio.save(filename)
+            if (ok) {
+                runOnUiThread {
+                    play.isEnabled = true
+                    track.stop()
+                }
+            }
+        }.start()
     }
 
     private fun onClickPlay() {
@@ -104,8 +159,10 @@ class MainActivity : AppCompatActivity() {
         var modelDir: String?
         var modelName: String?
         var ruleFsts: String?
+        var ruleFars: String?
         var lexicon: String?
         var dataDir: String?
+        var dictDir: String?
         var assets: AssetManager? = application.assets
 
         // The purpose of such a design is to make the CI test easier
@@ -114,8 +171,10 @@ class MainActivity : AppCompatActivity() {
         modelDir = null
         modelName = null
         ruleFsts = null
+        ruleFars = null
         lexicon = null
         dataDir = null
+        dictDir = null
 
         // Example 1:
         // modelDir = "vits-vctk"
@@ -130,22 +189,48 @@ class MainActivity : AppCompatActivity() {
         // dataDir = "vits-piper-en_US-amy-low/espeak-ng-data"
 
         // Example 3:
-        // modelDir = "vits-zh-aishell3"
-        // modelName = "vits-aishell3.onnx"
-        // ruleFsts = "vits-zh-aishell3/rule.fst"
-        // lexcion = "lexicon.txt"
+        // https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-icefall-zh-aishell3.tar.bz2
+        // modelDir = "vits-icefall-zh-aishell3"
+        // modelName = "model.onnx"
+        // ruleFsts = "vits-icefall-zh-aishell3/phone.fst,vits-icefall-zh-aishell3/date.fst,vits-icefall-zh-aishell3/number.fst,vits-icefall-zh-aishell3/new_heteronym.fst"
+        // ruleFars = "vits-icefall-zh-aishell3/rule.far"
+        // lexicon = "lexicon.txt"
+
+        // Example 4:
+        // https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/vits.html#csukuangfj-vits-zh-hf-fanchen-c-chinese-187-speakers
+        // modelDir = "vits-zh-hf-fanchen-C"
+        // modelName = "vits-zh-hf-fanchen-C.onnx"
+        // lexicon = "lexicon.txt"
+        // dictDir = "vits-zh-hf-fanchen-C/dict"
+
+        // Example 5:
+        // https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-coqui-de-css10.tar.bz2
+        // modelDir = "vits-coqui-de-css10"
+        // modelName = "model.onnx"
 
         if (dataDir != null) {
-            val newDir = copyDataDir(modelDir)
+            val newDir = copyDataDir(modelDir!!)
             modelDir = newDir + "/" + modelDir
             dataDir = newDir + "/" + dataDir
             assets = null
         }
 
+        if (dictDir != null) {
+            val newDir = copyDataDir(modelDir!!)
+            modelDir = newDir + "/" + modelDir
+            dictDir = modelDir + "/" + "dict"
+            ruleFsts = "$modelDir/phone.fst,$modelDir/date.fst,$modelDir/number.fst"
+            assets = null
+        }
+
         val config = getOfflineTtsConfig(
-            modelDir = modelDir!!, modelName = modelName!!, lexicon = lexicon ?: "",
+            modelDir = modelDir!!,
+            modelName = modelName!!,
+            lexicon = lexicon ?: "",
             dataDir = dataDir ?: "",
-            ruleFsts = ruleFsts ?: ""
+            dictDir = dictDir ?: "",
+            ruleFsts = ruleFsts ?: "",
+            ruleFars = ruleFars ?: "",
         )!!
 
         tts = OfflineTts(assetManager = assets, config = config)
@@ -153,11 +238,11 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun copyDataDir(dataDir: String): String {
-        println("data dir is $dataDir")
+        Log.i(TAG, "data dir is $dataDir")
         copyAssets(dataDir)
 
         val newDataDir = application.getExternalFilesDir(null)!!.absolutePath
-        println("newDataDir: $newDataDir")
+        Log.i(TAG, "newDataDir: $newDataDir")
         return newDataDir
     }
 
@@ -177,7 +262,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         } catch (ex: IOException) {
-            Log.e(TAG, "Failed to copy $path. ${ex.toString()}")
+            Log.e(TAG, "Failed to copy $path. $ex")
         }
     }
 
@@ -197,7 +282,7 @@ class MainActivity : AppCompatActivity() {
             ostream.flush()
             ostream.close()
         } catch (ex: Exception) {
-            Log.e(TAG, "Failed to copy $filename, ${ex.toString()}")
+            Log.e(TAG, "Failed to copy $filename, $ex")
         }
     }
 }

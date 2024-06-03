@@ -17,7 +17,7 @@ namespace sherpa_onnx {
 static void UseCachedDecoderOut(
     const std::vector<int32_t> &hyps_row_splits,
     const std::vector<OnlineTransducerDecoderResult> &results,
-    int32_t context_size, Ort::Value *decoder_out) {
+    Ort::Value *decoder_out) {
   std::vector<int64_t> shape =
       decoder_out->GetTensorTypeAndShapeInfo().GetShape();
 
@@ -59,6 +59,12 @@ void OnlineTransducerModifiedBeamSearchDecoder::StripLeadingBlanks(
   std::vector<int64_t> tokens(hyp.ys.begin() + context_size, hyp.ys.end());
   r->tokens = std::move(tokens);
   r->timestamps = std::move(hyp.timestamps);
+
+  // export per-token scores
+  r->ys_probs = std::move(hyp.ys_probs);
+  r->lm_probs = std::move(hyp.lm_probs);
+  r->context_scores = std::move(hyp.context_scores);
+
   r->num_trailing_blanks = hyp.num_trailing_blanks;
 }
 
@@ -74,11 +80,12 @@ void OnlineTransducerModifiedBeamSearchDecoder::Decode(
   std::vector<int64_t> encoder_out_shape =
       encoder_out.GetTensorTypeAndShapeInfo().GetShape();
 
-  if (encoder_out_shape[0] != result->size()) {
-    fprintf(stderr,
-            "Size mismatch! encoder_out.size(0) %d, result.size(0): %d\n",
-            static_cast<int32_t>(encoder_out_shape[0]),
-            static_cast<int32_t>(result->size()));
+  if (static_cast<int32_t>(encoder_out_shape[0]) !=
+      static_cast<int32_t>(result->size())) {
+    SHERPA_ONNX_LOGE(
+        "Size mismatch! encoder_out.size(0) %d, result.size(0): %d\n",
+        static_cast<int32_t>(encoder_out_shape[0]),
+        static_cast<int32_t>(result->size()));
     exit(-1);
   }
 
@@ -111,18 +118,36 @@ void OnlineTransducerModifiedBeamSearchDecoder::Decode(
     Ort::Value decoder_input = model_->BuildDecoderInput(prev);
     Ort::Value decoder_out = model_->RunDecoder(std::move(decoder_input));
     if (t == 0) {
-      UseCachedDecoderOut(hyps_row_splits, *result, model_->ContextSize(),
-                          &decoder_out);
+      UseCachedDecoderOut(hyps_row_splits, *result, &decoder_out);
     }
 
     Ort::Value cur_encoder_out =
         GetEncoderOutFrame(model_->Allocator(), &encoder_out, t);
     cur_encoder_out =
         Repeat(model_->Allocator(), &cur_encoder_out, hyps_row_splits);
-    Ort::Value logit = model_->RunJoiner(
-        std::move(cur_encoder_out), View(&decoder_out));
+    Ort::Value logit =
+        model_->RunJoiner(std::move(cur_encoder_out), View(&decoder_out));
 
     float *p_logit = logit.GetTensorMutableData<float>();
+
+    // copy raw logits, apply temperature-scaling  (for confidences)
+    // Note: temperature scaling is used only for the confidences,
+    //       the decoding algorithm uses the original logits
+    int32_t p_logit_items = vocab_size * num_hyps;
+    std::vector<float> logit_with_temperature(p_logit_items);
+    {
+      std::copy(p_logit, p_logit + p_logit_items,
+                logit_with_temperature.begin());
+      for (float &elem : logit_with_temperature) {
+        elem /= temperature_scale_;
+      }
+      LogSoftmax(logit_with_temperature.data(), vocab_size, num_hyps);
+    }
+
+    if (blank_penalty_ > 0.0) {
+      // assuming blank id is 0
+      SubtractBlank(p_logit, vocab_size, num_hyps, 0, blank_penalty_);
+    }
     LogSoftmax(p_logit, vocab_size, num_hyps);
 
     // now p_logit contains log_softmax output, we rename it to p_logprob
@@ -163,9 +188,9 @@ void OnlineTransducerModifiedBeamSearchDecoder::Decode(
           new_hyp.num_trailing_blanks = 0;
           if (ss != nullptr && ss[b]->GetContextGraph() != nullptr) {
             auto context_res = ss[b]->GetContextGraph()->ForwardOneStep(
-                context_state, new_token);
-            context_score = context_res.first;
-            new_hyp.context_state = context_res.second;
+                context_state, new_token, false /*strict mode*/);
+            context_score = std::get<0>(context_res);
+            new_hyp.context_state = std::get<1>(context_res);
           }
           if (lm_) {
             lm_->ComputeLMScore(lm_scale_, &new_hyp);
@@ -176,12 +201,31 @@ void OnlineTransducerModifiedBeamSearchDecoder::Decode(
         new_hyp.log_prob = p_logprob[k] + context_score -
                            prev_lm_log_prob;  // log_prob only includes the
                                               // score of the transducer
+        // export the per-token log scores
+        if (new_token != 0 && new_token != unk_id_) {
+          float y_prob = logit_with_temperature[start * vocab_size + k];
+          new_hyp.ys_probs.push_back(y_prob);
+
+          if (lm_) {  // export only when LM is used
+            float lm_prob = new_hyp.lm_log_prob - prev_lm_log_prob;
+            if (lm_scale_ != 0.0) {
+              lm_prob /= lm_scale_;  // remove lm-scale
+            }
+            new_hyp.lm_probs.push_back(lm_prob);
+          }
+
+          // export only when `ContextGraph` is used
+          if (ss != nullptr && ss[b]->GetContextGraph() != nullptr) {
+            new_hyp.context_scores.push_back(context_score);
+          }
+        }
+
         hyps.Add(std::move(new_hyp));
       }  // for (auto k : topk)
       cur.push_back(std::move(hyps));
       p_logprob += (end - start) * vocab_size;
     }  // for (int32_t b = 0; b != batch_size; ++b)
-  }
+  }    // for (int32_t t = 0; t != num_frames; ++t)
 
   for (int32_t b = 0; b != batch_size; ++b) {
     auto &hyps = cur[b];
@@ -197,7 +241,7 @@ void OnlineTransducerModifiedBeamSearchDecoder::Decode(
 
 void OnlineTransducerModifiedBeamSearchDecoder::UpdateDecoderOut(
     OnlineTransducerDecoderResult *result) {
-  if (result->tokens.size() == model_->ContextSize()) {
+  if (static_cast<int32_t>(result->tokens.size()) == model_->ContextSize()) {
     result->decoder_out = Ort::Value{nullptr};
     return;
   }

@@ -8,9 +8,9 @@ Usage:
 
 (1) Streaming transducer
 
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26
-cd sherpa-onnx-streaming-zipformer-en-2023-06-26
-git lfs pull --include "*.onnx"
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2
+tar xvf sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2
+rm sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2
 
 ./python-api-examples/online-decode-files.py \
   --tokens=./sherpa-onnx-streaming-zipformer-en-2023-06-26/tokens.txt \
@@ -23,9 +23,9 @@ git lfs pull --include "*.onnx"
 
 (2) Streaming paraformer
 
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en
-cd sherpa-onnx-streaming-paraformer-bilingual-zh-en
-git lfs pull --include "*.onnx"
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-paraformer-bilingual-zh-en.tar.bz2
+tar xvf sherpa-onnx-streaming-paraformer-bilingual-zh-en.tar.bz2
+rm sherpa-onnx-streaming-paraformer-bilingual-zh-en.tar.bz2
 
 ./python-api-examples/online-decode-files.py \
   --tokens=./sherpa-onnx-streaming-paraformer-bilingual-zh-en/tokens.txt \
@@ -37,11 +37,24 @@ git lfs pull --include "*.onnx"
   ./sherpa-onnx-streaming-paraformer-bilingual-zh-en/test_wavs/3.wav \
   ./sherpa-onnx-streaming-paraformer-bilingual-zh-en/test_wavs/8k.wav
 
-(3) Streaming Conformer CTC from WeNet
+(3) Streaming Zipformer2 CTC
 
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/csukuangfj/sherpa-onnx-zh-wenet-wenetspeech
-cd sherpa-onnx-zh-wenet-wenetspeech
-git lfs pull --include "*.onnx"
+wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-ctc-multi-zh-hans-2023-12-13.tar.bz2
+tar xvf sherpa-onnx-streaming-zipformer-ctc-multi-zh-hans-2023-12-13.tar.bz2
+rm sherpa-onnx-streaming-zipformer-ctc-multi-zh-hans-2023-12-13.tar.bz2
+ls -lh sherpa-onnx-streaming-zipformer-ctc-multi-zh-hans-2023-12-13
+
+./python-api-examples/online-decode-files.py \
+  --zipformer2-ctc=./sherpa-onnx-streaming-zipformer-ctc-multi-zh-hans-2023-12-13/ctc-epoch-20-avg-1-chunk-16-left-128.onnx \
+  --tokens=./sherpa-onnx-streaming-zipformer-ctc-multi-zh-hans-2023-12-13/tokens.txt \
+  ./sherpa-onnx-streaming-zipformer-ctc-multi-zh-hans-2023-12-13/test_wavs/DEV_T0000000000.wav \
+  ./sherpa-onnx-streaming-zipformer-ctc-multi-zh-hans-2023-12-13/test_wavs/DEV_T0000000001.wav
+
+(4) Streaming Conformer CTC from WeNet
+
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zh-wenet-wenetspeech.tar.bz2
+tar xvf sherpa-onnx-zh-wenet-wenetspeech.tar.bz2
+rm sherpa-onnx-zh-wenet-wenetspeech.tar.bz2
 
 ./python-api-examples/online-decode-files.py \
   --tokens=./sherpa-onnx-zh-wenet-wenetspeech/tokens.txt \
@@ -51,12 +64,9 @@ git lfs pull --include "*.onnx"
   ./sherpa-onnx-zh-wenet-wenetspeech/test_wavs/8k.wav
 
 
-
 Please refer to
-https://k2-fsa.github.io/sherpa/onnx/index.html
-and
-https://k2-fsa.github.io/sherpa/onnx/pretrained_models/wenet/index.html
-to install sherpa-onnx and to download streaming pre-trained models.
+https://k2-fsa.github.io/sherpa/onnx/pretrained_models/index.html
+to download streaming pre-trained models.
 """
 import argparse
 import time
@@ -98,6 +108,12 @@ def get_args():
     )
 
     parser.add_argument(
+        "--zipformer2-ctc",
+        type=str,
+        help="Path to the zipformer2 ctc model",
+    )
+
+    parser.add_argument(
         "--paraformer-encoder",
         type=str,
         help="Path to the paraformer encoder model",
@@ -112,7 +128,7 @@ def get_args():
     parser.add_argument(
         "--wenet-ctc",
         type=str,
-        help="Path to the wenet ctc model model",
+        help="Path to the wenet ctc model",
     )
 
     parser.add_argument(
@@ -182,11 +198,9 @@ def get_args():
         type=str,
         default="",
         help="""
-        The file containing hotwords, one words/phrases per line, and for each
-        phrase the bpe/cjkchar are separated by a space. For example:
-
-        ▁HE LL O ▁WORLD
-        你 好 世 界
+        The file containing hotwords, one words/phrases per line, like
+        HELLO WORLD
+        你好世界
         """,
     )
 
@@ -197,6 +211,40 @@ def get_args():
         help="""
         The hotword score of each token for biasing word/phrase. Used only if
         --hotwords-file is given.
+        """,
+    )
+
+    parser.add_argument(
+        "--modeling-unit",
+        type=str,
+        default="",
+        help="""
+        The modeling unit of the model, valid values are cjkchar, bpe, cjkchar+bpe.
+        Used only when hotwords-file is given.
+        """,
+    )
+
+    parser.add_argument(
+        "--bpe-vocab",
+        type=str,
+        default="",
+        help="""
+        The path to the bpe vocabulary, the bpe vocabulary is generated by
+        sentencepiece, you can also export the bpe vocabulary through a bpe model
+        by `scripts/export_bpe_vocab.py`. Used only when hotwords-file is given
+        and modeling-unit is bpe or cjkchar+bpe.
+        """,
+    )
+
+    parser.add_argument(
+        "--blank-penalty",
+        type=float,
+        default=0.0,
+        help="""
+        The penalty applied on blank symbol during decoding.
+        Note: It is a positive value that would be applied to logits like
+        this `logits[:, 0] -= blank_penalty` (suppose logits.shape is
+        [batch_size, vocab] and blank id is 0).
         """,
     )
 
@@ -274,6 +322,19 @@ def main():
             lm_scale=args.lm_scale,
             hotwords_file=args.hotwords_file,
             hotwords_score=args.hotwords_score,
+            modeling_unit=args.modeling_unit,
+            bpe_vocab=args.bpe_vocab,
+            blank_penalty=args.blank_penalty,
+        )
+    elif args.zipformer2_ctc:
+        recognizer = sherpa_onnx.OnlineRecognizer.from_zipformer2_ctc(
+            tokens=args.tokens,
+            model=args.zipformer2_ctc,
+            num_threads=args.num_threads,
+            provider=args.provider,
+            sample_rate=16000,
+            feature_dim=80,
+            decoding_method="greedy_search",
         )
     elif args.paraformer_encoder:
         recognizer = sherpa_onnx.OnlineRecognizer.from_paraformer(

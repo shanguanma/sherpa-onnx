@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v4
+      - uses: actions/setup-go@v5
         with:
           go-version: '>=1.12'
 
@@ -66,6 +66,77 @@ jobs:
         run: |
           gcc --version
 
+      - name: Test streaming HLG decoding (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          cd go-api-examples/streaming-hlg-decoding/
+          ./run.sh
+
+      - name: Test speaker identification (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          cd go-api-examples/speaker-identification
+          ./run.sh
+
+      - name: Test speaker identification (Win64)
+        if: matrix.os == 'windows-latest' && matrix.arch == 'x64'
+        shell: bash
+        run: |
+          cd go-api-examples/speaker-identification
+          go mod tidy
+          cat go.mod
+          go build
+
+          curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx
+          git clone https://github.com/csukuangfj/sr-data
+          ls -lh
+          echo $PWD
+          ls -lh /C/Users/runneradmin/go/pkg/mod/github.com/k2-fsa/
+          ls -lh /C/Users/runneradmin/go/pkg/mod/github.com/k2-fsa/*
+          cp -v /C/Users/runneradmin/go/pkg/mod/github.com/k2-fsa/sherpa-onnx-go-windows*/lib/x86_64-pc-windows-gnu/*.dll .
+          ls -lh
+          go mod tidy
+          go build
+          go run ./main.go
+
+      - name: Test speaker identification (Win32)
+        if: matrix.os == 'windows-latest' && matrix.arch == 'x86'
+        shell: bash
+        run: |
+          cd go-api-examples/speaker-identification
+          go mod tidy
+          cat go.mod
+          ls -lh
+
+          go env GOARCH
+          go env
+          echo "------------------------------"
+          go env -w GOARCH=386
+          go env -w CGO_ENABLED=1
+          go env
+
+          go clean
+          go build
+
+          echo $PWD
+
+          curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx
+          git clone https://github.com/csukuangfj/sr-data
+          ls -lh
+          echo $PWD
+          ls -lh /C/Users/runneradmin/go/pkg/mod/github.com/k2-fsa/
+          ls -lh /C/Users/runneradmin/go/pkg/mod/github.com/k2-fsa/*
+          cp -v /C/Users/runneradmin/go/pkg/mod/github.com/k2-fsa/sherpa-onnx-go-windows*/lib/i686-pc-windows-gnu/*.dll .
+          ls -lh
+          go mod tidy
+          go build
+          go run ./main.go
+
+          rm -rf sr-data
+          rm -rf *.onnx
+
       - name: Test non-streaming TTS (Linux/macOS)
         if: matrix.os != 'windows-latest'
         shell: bash
@@ -78,22 +149,21 @@ jobs:
           go build
           ls -lh
 
-          git lfs install
-
           echo "Test vits-ljs"
-          git clone https://huggingface.co/csukuangfj/vits-ljs
           ./run-vits-ljs.sh
           rm -rf vits-ljs
 
           echo "Test vits-vctk"
-          git clone https://huggingface.co/csukuangfj/vits-vctk
           ./run-vits-vctk.sh
           rm -rf vits-vctk
 
-          echo "Test vits-zh-aishell3"
-          git clone https://huggingface.co/csukuangfj/vits-zh-aishell3
+          echo "Test vits-icefall-zh-aishell3"
           ./run-vits-zh-aishell3.sh
-          rm -rf vits-zh-aishell3
+          rm -rf vits-icefall-zh-aishell3
+
+          echo "Test vits-piper-en_US-lessac-medium"
+          ./run-vits-piper-en_US-lessac-medium.sh
+          rm -rf vits-piper-en_US-lessac-medium
 
           ls -lh *.wav
           cp *.wav ../../tts-waves/
@@ -116,22 +186,21 @@ jobs:
           cp -v /C/Users/runneradmin/go/pkg/mod/github.com/k2-fsa/sherpa-onnx-go-windows*/lib/x86_64-pc-windows-gnu/*.dll .
           ls -lh
 
-          git lfs install
-
           echo "Test vits-ljs"
-          git clone https://huggingface.co/csukuangfj/vits-ljs
           ./run-vits-ljs.sh
           rm -rf vits-ljs
 
           echo "Test vits-vctk"
-          git clone https://huggingface.co/csukuangfj/vits-vctk
           ./run-vits-vctk.sh
           rm -rf vits-vctk
 
           echo "Test vits-zh-aishell3"
-          git clone https://huggingface.co/csukuangfj/vits-zh-aishell3
           ./run-vits-zh-aishell3.sh
-          rm -rf vits-zh-aishell3
+          rm -rf vits-icefall-zh-aishell3
+
+          echo "Test vits-piper-en_US-lessac-medium"
+          ./run-vits-piper-en_US-lessac-medium.sh
+          rm -rf vits-piper-en_US-lessac-medium
 
           ls -lh *.wav
           cp *.wav ../../tts-waves/
@@ -140,6 +209,7 @@ jobs:
         if: matrix.os == 'windows-latest' && matrix.arch == 'x86'
         shell: bash
         run: |
+          mkdir tts-waves
           cd go-api-examples/non-streaming-tts
           ls -lh
           go mod tidy
@@ -161,22 +231,21 @@ jobs:
           cp -v /C/Users/runneradmin/go/pkg/mod/github.com/k2-fsa/sherpa-onnx-go-windows*/lib/i686-pc-windows-gnu/*.dll .
           ls -lh
 
-          git lfs install
-
           echo "Test vits-ljs"
-          git clone https://huggingface.co/csukuangfj/vits-ljs
           ./run-vits-ljs.sh
           rm -rf vits-ljs
 
           echo "Test vits-vctk"
-          git clone https://huggingface.co/csukuangfj/vits-vctk
           ./run-vits-vctk.sh
           rm -rf vits-vctk
 
           echo "Test vits-zh-aishell3"
-          git clone https://huggingface.co/csukuangfj/vits-zh-aishell3
           ./run-vits-zh-aishell3.sh
           rm -rf vits-zh-aishell3
+
+          echo "Test vits-piper-en_US-lessac-medium"
+          ./run-vits-piper-en_US-lessac-medium.sh
+          rm -rf vits-piper-en_US-lessac-medium
 
           ls -lh *.wav
           cp *.wav ../../tts-waves/
@@ -192,33 +261,23 @@ jobs:
           go build
           ls -lh
 
-          git lfs install
-
           echo "Test transducer"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-zipformer-en-2023-06-26
           ./run-transducer.sh
           rm -rf sherpa-onnx-zipformer-en-2023-06-26
 
           echo "Test paraformer"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2023-03-28
           ./run-paraformer.sh
           rm -rf sherpa-onnx-paraformer-zh-2023-03-28
 
           echo "Test NeMo CTC"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-nemo-ctc-en-conformer-medium
           ./run-nemo-ctc.sh
           rm -rf sherpa-onnx-nemo-ctc-en-conformer-medium
 
           echo "Test Whisper tiny.en"
-          GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en
-          cd sherpa-onnx-whisper-tiny.en
-          git lfs pull --include "*.onnx"
-          cd ..
           ./run-whisper.sh
           rm -rf sherpa-onnx-whisper-tiny.en
 
           echo "Test Tdnn yesno"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-tdnn-yesno
           ./run-tdnn-yesno.sh
           rm -rf sherpa-onnx-tdnn-yesno
 
@@ -239,33 +298,23 @@ jobs:
           cp -v /C/Users/runneradmin/go/pkg/mod/github.com/k2-fsa/sherpa-onnx-go-windows*/lib/x86_64-pc-windows-gnu/*.dll .
           ls -lh
 
-          git lfs install
-
           echo "Test transducer"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-zipformer-en-2023-06-26
           ./run-transducer.sh
           rm -rf sherpa-onnx-zipformer-en-2023-06-26
 
           echo "Test paraformer"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2023-03-28
           ./run-paraformer.sh
           rm -rf sherpa-onnx-paraformer-zh-2023-03-28
 
           echo "Test NeMo CTC"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-nemo-ctc-en-conformer-medium
           ./run-nemo-ctc.sh
           rm -rf sherpa-onnx-nemo-ctc-en-conformer-medium
 
           echo "Test Whisper tiny.en"
-          GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en
-          cd sherpa-onnx-whisper-tiny.en
-          git lfs pull --include "*.onnx"
-          cd ..
           ./run-whisper.sh
           rm -rf sherpa-onnx-whisper-tiny.en
 
           echo "Test Tdnn yesno"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-tdnn-yesno
           ./run-tdnn-yesno.sh
           rm -rf sherpa-onnx-tdnn-yesno
 
@@ -294,33 +343,23 @@ jobs:
           cp -v /C/Users/runneradmin/go/pkg/mod/github.com/k2-fsa/sherpa-onnx-go-windows*/lib/i686-pc-windows-gnu/*.dll .
           ls -lh
 
-          git lfs install
-
           echo "Test transducer"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-zipformer-en-2023-06-26
           ./run-transducer.sh
           rm -rf sherpa-onnx-zipformer-en-2023-06-26
 
           echo "Test paraformer"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2023-03-28
           ./run-paraformer.sh
           rm -rf sherpa-onnx-paraformer-zh-2023-03-28
 
           echo "Test NeMo CTC"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-nemo-ctc-en-conformer-medium
           ./run-nemo-ctc.sh
           rm -rf sherpa-onnx-nemo-ctc-en-conformer-medium
 
           echo "Test Whisper tiny.en"
-          GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en
-          cd sherpa-onnx-whisper-tiny.en
-          git lfs pull --include "*.onnx"
-          cd ..
           ./run-whisper.sh
           rm -rf sherpa-onnx-whisper-tiny.en
 
           echo "Test Tdnn yesno"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-tdnn-yesno
           ./run-tdnn-yesno.sh
           rm -rf sherpa-onnx-tdnn-yesno
 
@@ -335,15 +374,11 @@ jobs:
           go build
           ls -lh
 
-          git lfs install
-
           echo "Test transducer"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26
           ./run-transducer.sh
           rm -rf sherpa-onnx-streaming-zipformer-en-2023-06-26
 
           echo "Test paraformer"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en
           ./run-paraformer.sh
           rm -rf sherpa-onnx-streaming-paraformer-bilingual-zh-en
 
@@ -364,15 +399,11 @@ jobs:
           cp -v /C/Users/runneradmin/go/pkg/mod/github.com/k2-fsa/sherpa-onnx-go-windows*/lib/x86_64-pc-windows-gnu/*.dll .
           ls -lh
 
-          git lfs install
-
           echo "Test transducer"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26
           ./run-transducer.sh
           rm -rf sherpa-onnx-streaming-zipformer-en-2023-06-26
 
           echo "Test paraformer"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en
           ./run-paraformer.sh
           rm -rf sherpa-onnx-streaming-paraformer-bilingual-zh-en
 
@@ -402,19 +433,15 @@ jobs:
           cp -v /C/Users/runneradmin/go/pkg/mod/github.com/k2-fsa/sherpa-onnx-go-windows*/lib/i686-pc-windows-gnu/*.dll .
           ls -lh
 
-          git lfs install
-
           echo "Test transducer"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26
           ./run-transducer.sh
           rm -rf sherpa-onnx-streaming-zipformer-en-2023-06-26
 
           echo "Test paraformer"
-          git clone https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en
           ./run-paraformer.sh
           rm -rf sherpa-onnx-streaming-paraformer-bilingual-zh-en
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
-          name: tts-waves
+          name: tts-waves-${{ matrix.os }}-${{ matrix.arch }}
           path: tts-waves

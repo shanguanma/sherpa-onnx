@@ -8,15 +8,18 @@
 #include <memory>
 #include <vector>
 
+#include "kaldi-decoder/csrc/faster-decoder.h"
 #include "onnxruntime_cxx_api.h"  // NOLINT
 #include "sherpa-onnx/csrc/context-graph.h"
 #include "sherpa-onnx/csrc/features.h"
 #include "sherpa-onnx/csrc/online-ctc-decoder.h"
 #include "sherpa-onnx/csrc/online-paraformer-decoder.h"
 #include "sherpa-onnx/csrc/online-transducer-decoder.h"
+#include "sherpa-onnx/csrc/transducer-keyword-decoder.h"
 
 namespace sherpa_onnx {
 
+struct TransducerKeywordResult;
 class OnlineStream {
  public:
   explicit OnlineStream(const FeatureExtractorConfig &config = {},
@@ -76,6 +79,9 @@ class OnlineStream {
   void SetResult(const OnlineTransducerDecoderResult &r);
   OnlineTransducerDecoderResult &GetResult();
 
+  void SetKeywordResult(const TransducerKeywordResult &r);
+  TransducerKeywordResult &GetKeywordResult(bool remove_duplicates = false);
+
   void SetCtcResult(const OnlineCtcDecoderResult &r);
   OnlineCtcDecoderResult &GetCtcResult();
 
@@ -85,6 +91,9 @@ class OnlineStream {
   void SetStates(std::vector<Ort::Value> states);
   std::vector<Ort::Value> &GetStates();
 
+  void SetNeMoDecoderStates(std::vector<Ort::Value> decoder_states);
+  std::vector<Ort::Value> &GetNeMoDecoderStates();
+
   /**
    * Get the context graph corresponding to this stream.
    *
@@ -92,7 +101,12 @@ class OnlineStream {
    */
   const ContextGraphPtr &GetContextGraph() const;
 
-  // for streaming parformer
+  // for online ctc decoder
+  void SetFasterDecoder(std::unique_ptr<kaldi_decoder::FasterDecoder> decoder);
+  kaldi_decoder::FasterDecoder *GetFasterDecoder() const;
+  int32_t &GetFasterDecoderProcessedFrames();
+
+  // for streaming paraformer
   std::vector<float> &GetParaformerFeatCache();
   std::vector<float> &GetParaformerEncoderOutCache();
   std::vector<float> &GetParaformerAlphaCache();

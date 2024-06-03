@@ -23,10 +23,9 @@ Usage examples:
 (1) Use a non-streaming transducer model
 
 cd /path/to/sherpa-onnx
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/csukuangfj/sherpa-onnx-zipformer-en-2023-06-26
-cd sherpa-onnx-zipformer-en-2023-06-26
-git lfs pull --include "*.onnx"
-cd ..
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2
+tar xvf sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2
+rm sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2
 
 python3 ./python-api-examples/non_streaming_server.py \
   --encoder ./sherpa-onnx-zipformer-en-2023-06-26/encoder-epoch-99-avg-1.onnx \
@@ -37,22 +36,20 @@ python3 ./python-api-examples/non_streaming_server.py \
 (2) Use a non-streaming paraformer
 
 cd /path/to/sherpa-onnx
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-bilingual-zh-en
-cd sherpa-onnx-paraformer-bilingual-zh-en/
-git lfs pull --include "*.onnx"
-cd ..
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-paraformer-zh-2023-03-28.tar.bz2
+tar xvf sherpa-onnx-paraformer-zh-2023-03-28.tar.bz2
+rm sherpa-onnx-paraformer-zh-2023-03-28.tar.bz2
 
 python3 ./python-api-examples/non_streaming_server.py \
-  --paraformer ./sherpa-onnx-paraformer-bilingual-zh-en/model.int8.onnx \
-  --tokens ./sherpa-onnx-paraformer-bilingual-zh-en/tokens.txt
+  --paraformer ./sherpa-onnx-paraformer-zh-2023-03-28/model.int8.onnx \
+  --tokens ./sherpa-onnx-paraformer-zh-2023-03-28/tokens.txt
 
 (3) Use a non-streaming CTC model from NeMo
 
 cd /path/to/sherpa-onnx
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/csukuangfj/sherpa-onnx-nemo-ctc-en-conformer-medium
-cd sherpa-onnx-nemo-ctc-en-conformer-medium
-git lfs pull --include "*.onnx"
-cd ..
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-ctc-en-conformer-medium.tar.bz2
+tar xvf sherpa-onnx-nemo-ctc-en-conformer-medium.tar.bz2
+rm sherpa-onnx-nemo-ctc-en-conformer-medium.tar.bz2
 
 python3 ./python-api-examples/non_streaming_server.py \
   --nemo-ctc ./sherpa-onnx-nemo-ctc-en-conformer-medium/model.onnx \
@@ -61,10 +58,9 @@ python3 ./python-api-examples/non_streaming_server.py \
 (4) Use a non-streaming CTC model from WeNet
 
 cd /path/to/sherpa-onnx
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/csukuangfj/sherpa-onnx-zh-wenet-wenetspeech
-cd sherpa-onnx-zh-wenet-wenetspeech
-git lfs pull --include "*.onnx"
-cd ..
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zh-wenet-wenetspeech.tar.bz2
+tar xvf sherpa-onnx-zh-wenet-wenetspeech.tar.bz2
+rm sherpa-onnx-zh-wenet-wenetspeech.tar.bz2
 
 python3 ./python-api-examples/non_streaming_server.py \
   --wenet-ctc ./sherpa-onnx-zh-wenet-wenetspeech/model.onnx \
@@ -73,10 +69,9 @@ python3 ./python-api-examples/non_streaming_server.py \
 (5) Use a Whisper model
 
 cd /path/to/sherpa-onnx
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en
-cd sherpa-onnx-whisper-tiny.en
-git lfs pull --include "*.onnx"
-cd ..
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-tiny.en.tar.bz2
+tar xvf sherpa-onnx-whisper-tiny.en.tar.bz2
+rm sherpa-onnx-whisper-tiny.en.tar.bz2
 
 python3 ./python-api-examples/non_streaming_server.py \
   --whisper-encoder=./sherpa-onnx-whisper-tiny.en/tiny.en-encoder.onnx \
@@ -87,9 +82,9 @@ python3 ./python-api-examples/non_streaming_server.py \
 
 cd /path/to/sherpa-onnx
 
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/csukuangfj/sherpa-onnx-tdnn-yesno
-cd sherpa-onnx-tdnn-yesno
-git lfs pull --include "*.onnx"
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-tdnn-yesno.tar.bz2
+tar xvf sherpa-onnx-tdnn-yesno.tar.bz2
+rm sherpa-onnx-tdnn-yesno.tar.bz2
 
 python3 ./python-api-examples/non_streaming_server.py \
   --sample-rate=8000 \
@@ -277,6 +272,17 @@ def add_whisper_model_args(parser: argparse.ArgumentParser):
         """,
     )
 
+    parser.add_argument(
+        "--whisper-tail-paddings",
+        default=-1,
+        type=int,
+        help="""Number of tail padding frames.
+        We have removed the 30-second constraint from whisper, so you need to
+        choose the amount of tail padding frames by yourself.
+        Use -1 to use a default value for tail padding.
+        """,
+    )
+
 
 def add_model_args(parser: argparse.ArgumentParser):
     add_transducer_model_args(parser)
@@ -373,6 +379,20 @@ def add_hotwords_args(parser: argparse.ArgumentParser):
     )
 
 
+def add_blank_penalty_args(parser: argparse.ArgumentParser):
+    parser.add_argument(
+        "--blank-penalty",
+        type=float,
+        default=0.0,
+        help="""
+        The penalty applied on blank symbol during decoding.
+        Note: It is a positive value that would be applied to logits like
+        this `logits[:, 0] -= blank_penalty` (suppose logits.shape is
+        [batch_size, vocab] and blank id is 0).
+        """,
+    )
+
+
 def check_args(args):
     if not Path(args.tokens).is_file():
         raise ValueError(f"{args.tokens} does not exist")
@@ -403,6 +423,7 @@ def get_args():
     add_feature_config_args(parser)
     add_decoding_args(parser)
     add_hotwords_args(parser)
+    add_blank_penalty_args(parser)
 
     parser.add_argument(
         "--port",
@@ -851,6 +872,8 @@ def create_recognizer(args) -> sherpa_onnx.OfflineRecognizer:
             max_active_paths=args.max_active_paths,
             hotwords_file=args.hotwords_file,
             hotwords_score=args.hotwords_score,
+            blank_penalty=args.blank_penalty,
+            provider=args.provider,
         )
     elif args.paraformer:
         assert len(args.nemo_ctc) == 0, args.nemo_ctc
@@ -868,6 +891,7 @@ def create_recognizer(args) -> sherpa_onnx.OfflineRecognizer:
             sample_rate=args.sample_rate,
             feature_dim=args.feat_dim,
             decoding_method=args.decoding_method,
+            provider=args.provider,
         )
     elif args.nemo_ctc:
         assert len(args.wenet_ctc) == 0, args.wenet_ctc
@@ -884,6 +908,7 @@ def create_recognizer(args) -> sherpa_onnx.OfflineRecognizer:
             sample_rate=args.sample_rate,
             feature_dim=args.feat_dim,
             decoding_method=args.decoding_method,
+            provider=args.provider,
         )
     elif args.wenet_ctc:
         assert len(args.whisper_encoder) == 0, args.whisper_encoder
@@ -899,6 +924,7 @@ def create_recognizer(args) -> sherpa_onnx.OfflineRecognizer:
             sample_rate=args.sample_rate,
             feature_dim=args.feat_dim,
             decoding_method=args.decoding_method,
+            provider=args.provider,
         )
     elif args.whisper_encoder:
         assert len(args.tdnn_model) == 0, args.tdnn_model
@@ -913,6 +939,8 @@ def create_recognizer(args) -> sherpa_onnx.OfflineRecognizer:
             decoding_method=args.decoding_method,
             language=args.whisper_language,
             task=args.whisper_task,
+            tail_paddings=args.whisper_tail_paddings,
+            provider=args.provider,
         )
     elif args.tdnn_model:
         assert_file_exists(args.tdnn_model)
@@ -924,6 +952,7 @@ def create_recognizer(args) -> sherpa_onnx.OfflineRecognizer:
             feature_dim=args.feat_dim,
             num_threads=args.num_threads,
             decoding_method=args.decoding_method,
+            provider=args.provider,
         )
     else:
         raise ValueError("Please specify at least one model")
